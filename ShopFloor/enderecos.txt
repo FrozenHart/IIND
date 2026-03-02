@@ -1,0 +1,1057 @@
+-----------------------------------------
+Facility #1 : Warehouse Out
+
+  Digital Outs
+  ------------
+   0 : Motor +
+   1 : Motor -
+
+  Digital Ins
+  -----------
+   0 : Sensor 0
+
+  Registers
+  ---------
+   0 : Warehouse Out
+-----------------------------------------
+Facility #2 : Warehouse Out
+
+  Digital Outs
+  ------------
+   2 : Motor +
+   3 : Motor -
+
+  Digital Ins
+  -----------
+   1 : Sensor 0
+
+  Registers
+  ---------
+   1 : Warehouse Out
+-----------------------------------------
+Facility #3 : Warehouse Out
+
+  Digital Outs
+  ------------
+   4 : Motor +
+   5 : Motor -
+
+  Digital Ins
+  -----------
+   2 : Sensor 0
+
+  Registers
+  ---------
+   2 : Warehouse Out
+-----------------------------------------
+Facility #4 : Warehouse Out
+
+  Digital Outs
+  ------------
+   6 : Motor +
+   7 : Motor -
+
+  Digital Ins
+  -----------
+   3 : Sensor 0
+
+  Registers
+  ---------
+   3 : Warehouse Out
+-----------------------------------------
+Facility #5 : Warehouse Out
+
+  Digital Outs
+  ------------
+   8 : Motor +
+   9 : Motor -
+
+  Digital Ins
+  -----------
+   4 : Sensor 0
+
+  Registers
+  ---------
+   4 : Warehouse Out
+-----------------------------------------
+Facility #6 : Warehouse In
+
+  Digital Outs
+  ------------
+   10 : Motor +
+   11 : Motor -
+   12 : Warehouse In
+
+  Digital Ins
+  -----------
+   5 : Sensor 0
+-----------------------------------------
+Facility #7 : Warehouse In
+
+  Digital Outs
+  ------------
+   13 : Motor +
+   14 : Motor -
+   15 : Warehouse In
+
+  Digital Ins
+  -----------
+   6 : Sensor 0
+-----------------------------------------
+Facility #8 : Warehouse In
+
+  Digital Outs
+  ------------
+   16 : Motor +
+   17 : Motor -
+   18 : Warehouse In
+
+  Digital Ins
+  -----------
+   7 : Sensor 0
+-----------------------------------------
+Facility #9 : Warehouse In
+
+  Digital Outs
+  ------------
+   19 : Motor +
+   20 : Motor -
+   21 : Warehouse In
+
+  Digital Ins
+  -----------
+   8 : Sensor 0
+-----------------------------------------
+Facility #10 : Warehouse In
+
+  Digital Outs
+  ------------
+   22 : Motor +
+   23 : Motor -
+   24 : Warehouse In
+
+  Digital Ins
+  -----------
+   9 : Sensor 0
+-----------------------------------------
+Facility #11 : Warehouse In
+
+  Digital Outs
+  ------------
+   25 : Motor +
+   26 : Motor -
+   27 : Warehouse In
+
+  Digital Ins
+  -----------
+   10 : Sensor 0
+-----------------------------------------
+Facility #12 : Warehouse Out
+
+  Digital Outs
+  ------------
+   28 : Motor +
+   29 : Motor -
+
+  Digital Ins
+  -----------
+   11 : Sensor 0
+
+  Registers
+  ---------
+   5 : Warehouse Out
+-----------------------------------------
+Facility #13 : Warehouse Out
+
+  Digital Outs
+  ------------
+   30 : Motor +
+   31 : Motor -
+
+  Digital Ins
+  -----------
+   12 : Sensor 0
+
+  Registers
+  ---------
+   6 : Warehouse Out
+-----------------------------------------
+Facility #14 : Warehouse Out
+
+  Digital Outs
+  ------------
+   32 : Motor +
+   33 : Motor -
+
+  Digital Ins
+  -----------
+   13 : Sensor 0
+
+  Registers
+  ---------
+   7 : Warehouse Out
+-----------------------------------------
+Facility #15 : Warehouse Out
+
+  Digital Outs
+  ------------
+   34 : Motor +
+   35 : Motor -
+
+  Digital Ins
+  -----------
+   14 : Sensor 0
+
+  Registers
+  ---------
+   8 : Warehouse Out
+-----------------------------------------
+Facility #16 : Warehouse Out
+
+  Digital Outs
+  ------------
+   36 : Motor +
+   37 : Motor -
+
+  Digital Ins
+  -----------
+   15 : Sensor 0
+
+  Registers
+  ---------
+   9 : Warehouse Out
+-----------------------------------------
+Facility #17 : Warehouse Out
+
+  Digital Outs
+  ------------
+   38 : Motor +
+   39 : Motor -
+
+  Digital Ins
+  -----------
+   16 : Sensor 0
+
+  Registers
+  ---------
+   10 : Warehouse Out
+-----------------------------------------
+Facility #18 : Warehouse Out
+
+  Digital Outs
+  ------------
+   40 : Motor +
+   41 : Motor -
+
+  Digital Ins
+  -----------
+   17 : Sensor 0
+
+  Registers
+  ---------
+   11 : Warehouse Out
+-----------------------------------------
+Facility #19 : Warehouse Out
+
+  Digital Outs
+  ------------
+   42 : Motor +
+   43 : Motor -
+
+  Digital Ins
+  -----------
+   18 : Sensor 0
+
+  Registers
+  ---------
+   12 : Warehouse Out
+-----------------------------------------
+Facility #20 : Warehouse Out
+
+  Digital Outs
+  ------------
+   44 : Motor +
+   45 : Motor -
+
+  Digital Ins
+  -----------
+   19 : Sensor 0
+
+  Registers
+  ---------
+   13 : Warehouse Out
+-----------------------------------------
+Facility #21 : Warehouse Out
+
+  Digital Outs
+  ------------
+   46 : Motor +
+   47 : Motor -
+
+  Digital Ins
+  -----------
+   20 : Sensor 0
+
+  Registers
+  ---------
+   14 : Warehouse Out
+-----------------------------------------
+Facility #22 : Warehouse In
+
+  Digital Outs
+  ------------
+   48 : Motor +
+   49 : Motor -
+   50 : Warehouse In
+
+  Digital Ins
+  -----------
+   21 : Sensor 0
+-----------------------------------------
+Facility #23 : Warehouse In
+
+  Digital Outs
+  ------------
+   51 : Motor +
+   52 : Motor -
+   53 : Warehouse In
+
+  Digital Ins
+  -----------
+   22 : Sensor 0
+-----------------------------------------
+Facility #24 : Warehouse In
+
+  Digital Outs
+  ------------
+   54 : Motor +
+   55 : Motor -
+   56 : Warehouse In
+
+  Digital Ins
+  -----------
+   23 : Sensor 0
+-----------------------------------------
+Facility #25 : Warehouse In
+
+  Digital Outs
+  ------------
+   57 : Motor +
+   58 : Motor -
+   59 : Warehouse In
+
+  Digital Ins
+  -----------
+   24 : Sensor 0
+-----------------------------------------
+Facility #26 : Conveyor
+
+  Digital Outs
+  ------------
+   60 : Motor +
+   61 : Motor -
+
+  Digital Ins
+  -----------
+   25 : Sensor 0
+-----------------------------------------
+Facility #27 : Conveyor
+
+  Digital Outs
+  ------------
+   62 : Motor +
+   63 : Motor -
+
+  Digital Ins
+  -----------
+   26 : Sensor 0
+-----------------------------------------
+Facility #28 : Conveyor
+
+  Digital Outs
+  ------------
+   64 : Motor +
+   65 : Motor -
+
+  Digital Ins
+  -----------
+   27 : Sensor 0
+-----------------------------------------
+Facility #29 : Conveyor
+
+  Digital Outs
+  ------------
+   66 : Motor +
+   67 : Motor -
+
+  Digital Ins
+  -----------
+   28 : Sensor 0
+-----------------------------------------
+Facility #30 : Conveyor
+
+  Digital Outs
+  ------------
+   68 : Motor +
+   69 : Motor -
+
+  Digital Ins
+  -----------
+   29 : Sensor 0
+-----------------------------------------
+Facility #31 : Machine
+
+  Digital Outs
+  ------------
+   70 : Motor +
+   71 : Motor -
+   72 : Load
+   73 : Rotate -
+   74 : Rotate +
+   75 : Tool
+   76 : Y -
+   77 : Y +
+   78 : Z -
+   79 : Z +
+
+  Digital Ins
+  -----------
+   30 : Sensor 0
+   31 : Tool Sensor
+   32 : Y - Sensor
+   33 : Y + Sensor
+   34 : Z - Sensor
+   35 : Z + Sensor
+-----------------------------------------
+Facility #32 : Conveyor
+
+  Digital Outs
+  ------------
+   80 : Motor +
+   81 : Motor -
+
+  Digital Ins
+  -----------
+   36 : Sensor 0
+-----------------------------------------
+Facility #33 : Machine
+
+  Digital Outs
+  ------------
+   82 : Motor +
+   83 : Motor -
+   84 : Load
+   85 : Rotate -
+   86 : Rotate +
+   87 : Tool
+   88 : Y -
+   89 : Y +
+   90 : Z -
+   91 : Z +
+
+  Digital Ins
+  -----------
+   37 : Sensor 0
+   38 : Tool Sensor
+   39 : Y - Sensor
+   40 : Y + Sensor
+   41 : Z - Sensor
+   42 : Z + Sensor
+-----------------------------------------
+Facility #34 : Conveyor
+
+  Digital Outs
+  ------------
+   92 : Motor +
+   93 : Motor -
+
+  Digital Ins
+  -----------
+   43 : Sensor 0
+-----------------------------------------
+Facility #35 : Machine
+
+  Digital Outs
+  ------------
+   94 : Motor +
+   95 : Motor -
+   96 : Load
+   97 : Rotate -
+   98 : Rotate +
+   99 : Tool
+   100 : Y -
+   101 : Y +
+   102 : Z -
+   103 : Z +
+
+  Digital Ins
+  -----------
+   44 : Sensor 0
+   45 : Tool Sensor
+   46 : Y - Sensor
+   47 : Y + Sensor
+   48 : Z - Sensor
+   49 : Z + Sensor
+-----------------------------------------
+Facility #36 : Machine
+
+  Digital Outs
+  ------------
+   104 : Motor +
+   105 : Motor -
+   106 : Load
+   107 : Rotate -
+   108 : Rotate +
+   109 : Tool
+   110 : Y -
+   111 : Y +
+   112 : Z -
+   113 : Z +
+
+  Digital Ins
+  -----------
+   50 : Sensor 0
+   51 : Tool Sensor
+   52 : Y - Sensor
+   53 : Y + Sensor
+   54 : Z - Sensor
+   55 : Z + Sensor
+-----------------------------------------
+Facility #37 : Conveyor
+
+  Digital Outs
+  ------------
+   114 : Motor +
+   115 : Motor -
+
+  Digital Ins
+  -----------
+   56 : Sensor 0
+-----------------------------------------
+Facility #38 : Machine
+
+  Digital Outs
+  ------------
+   116 : Motor +
+   117 : Motor -
+   118 : Load
+   119 : Rotate -
+   120 : Rotate +
+   121 : Tool
+   122 : Y -
+   123 : Y +
+   124 : Z -
+   125 : Z +
+
+  Digital Ins
+  -----------
+   57 : Sensor 0
+   58 : Tool Sensor
+   59 : Y - Sensor
+   60 : Y + Sensor
+   61 : Z - Sensor
+   62 : Z + Sensor
+-----------------------------------------
+Facility #39 : Conveyor
+
+  Digital Outs
+  ------------
+   126 : Motor +
+   127 : Motor -
+
+  Digital Ins
+  -----------
+   63 : Sensor 0
+-----------------------------------------
+Facility #40 : Machine
+
+  Digital Outs
+  ------------
+   128 : Motor +
+   129 : Motor -
+   130 : Load
+   131 : Rotate -
+   132 : Rotate +
+   133 : Tool
+   134 : Y -
+   135 : Y +
+   136 : Z -
+   137 : Z +
+
+  Digital Ins
+  -----------
+   64 : Sensor 0
+   65 : Tool Sensor
+   66 : Y - Sensor
+   67 : Y + Sensor
+   68 : Z - Sensor
+   69 : Z + Sensor
+-----------------------------------------
+Facility #41 : Machine
+
+  Digital Outs
+  ------------
+   138 : Motor +
+   139 : Motor -
+   140 : Load
+   141 : Rotate -
+   142 : Rotate +
+   143 : Tool
+   144 : Y -
+   145 : Y +
+   146 : Z -
+   147 : Z +
+
+  Digital Ins
+  -----------
+   70 : Sensor 0
+   71 : Tool Sensor
+   72 : Y - Sensor
+   73 : Y + Sensor
+   74 : Z - Sensor
+   75 : Z + Sensor
+-----------------------------------------
+Facility #42 : Conveyor
+
+  Digital Outs
+  ------------
+   148 : Motor +
+   149 : Motor -
+
+  Digital Ins
+  -----------
+   76 : Sensor 0
+-----------------------------------------
+Facility #43 : Machine
+
+  Digital Outs
+  ------------
+   150 : Motor +
+   151 : Motor -
+   152 : Load
+   153 : Rotate -
+   154 : Rotate +
+   155 : Tool
+   156 : Y -
+   157 : Y +
+   158 : Z -
+   159 : Z +
+
+  Digital Ins
+  -----------
+   77 : Sensor 0
+   78 : Tool Sensor
+   79 : Y - Sensor
+   80 : Y + Sensor
+   81 : Z - Sensor
+   82 : Z + Sensor
+-----------------------------------------
+Facility #44 : Conveyor
+
+  Digital Outs
+  ------------
+   160 : Motor +
+   161 : Motor -
+
+  Digital Ins
+  -----------
+   83 : Sensor 0
+-----------------------------------------
+Facility #45 : Machine
+
+  Digital Outs
+  ------------
+   162 : Motor +
+   163 : Motor -
+   164 : Load
+   165 : Rotate -
+   166 : Rotate +
+   167 : Tool
+   168 : Y -
+   169 : Y +
+   170 : Z -
+   171 : Z +
+
+  Digital Ins
+  -----------
+   84 : Sensor 0
+   85 : Tool Sensor
+   86 : Y - Sensor
+   87 : Y + Sensor
+   88 : Z - Sensor
+   89 : Z + Sensor
+-----------------------------------------
+Facility #46 : Machine
+
+  Digital Outs
+  ------------
+   172 : Motor +
+   173 : Motor -
+   174 : Load
+   175 : Rotate -
+   176 : Rotate +
+   177 : Tool
+   178 : Y -
+   179 : Y +
+   180 : Z -
+   181 : Z +
+
+  Digital Ins
+  -----------
+   90 : Sensor 0
+   91 : Tool Sensor
+   92 : Y - Sensor
+   93 : Y + Sensor
+   94 : Z - Sensor
+   95 : Z + Sensor
+-----------------------------------------
+Facility #47 : Conveyor
+
+  Digital Outs
+  ------------
+   182 : Motor +
+   183 : Motor -
+
+  Digital Ins
+  -----------
+   96 : Sensor 0
+-----------------------------------------
+Facility #48 : Machine
+
+  Digital Outs
+  ------------
+   184 : Motor +
+   185 : Motor -
+   186 : Load
+   187 : Rotate -
+   188 : Rotate +
+   189 : Tool
+   190 : Y -
+   191 : Y +
+   192 : Z -
+   193 : Z +
+
+  Digital Ins
+  -----------
+   97 : Sensor 0
+   98 : Tool Sensor
+   99 : Y - Sensor
+   100 : Y + Sensor
+   101 : Z - Sensor
+   102 : Z + Sensor
+-----------------------------------------
+Facility #49 : Conveyor
+
+  Digital Outs
+  ------------
+   194 : Motor +
+   195 : Motor -
+
+  Digital Ins
+  -----------
+   103 : Sensor 0
+-----------------------------------------
+Facility #50 : Machine
+
+  Digital Outs
+  ------------
+   196 : Motor +
+   197 : Motor -
+   198 : Load
+   199 : Rotate -
+   200 : Rotate +
+   201 : Tool
+   202 : Y -
+   203 : Y +
+   204 : Z -
+   205 : Z +
+
+  Digital Ins
+  -----------
+   104 : Sensor 0
+   105 : Tool Sensor
+   106 : Y - Sensor
+   107 : Y + Sensor
+   108 : Z - Sensor
+   109 : Z + Sensor
+-----------------------------------------
+Facility #51 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   110 : Sensor 0
+-----------------------------------------
+Facility #52 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   111 : Sensor 0
+-----------------------------------------
+Facility #53 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   112 : Sensor 0
+-----------------------------------------
+Facility #54 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   113 : Sensor 0
+-----------------------------------------
+Facility #55 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   114 : Sensor 0
+-----------------------------------------
+Facility #56 : Conveyor
+
+  Digital Outs
+  ------------
+   206 : Motor +
+   207 : Motor -
+
+  Digital Ins
+  -----------
+   115 : Sensor 0
+-----------------------------------------
+Facility #57 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   116 : Sensor 0
+-----------------------------------------
+Facility #58 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   117 : Sensor 0
+-----------------------------------------
+Facility #59 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   118 : Sensor 0
+-----------------------------------------
+Facility #60 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   119 : Sensor 0
+-----------------------------------------
+Facility #61 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   120 : Sensor 0
+-----------------------------------------
+Facility #62 : Conveyor
+
+  Digital Outs
+  ------------
+   208 : Motor +
+   209 : Motor -
+
+  Digital Ins
+  -----------
+   121 : Sensor 0
+-----------------------------------------
+Facility #63 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   122 : Sensor 0
+-----------------------------------------
+Facility #64 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   123 : Sensor 0
+-----------------------------------------
+Facility #65 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   124 : Sensor 0
+-----------------------------------------
+Facility #66 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   125 : Sensor 0
+-----------------------------------------
+Facility #67 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   126 : Sensor 0
+-----------------------------------------
+Facility #68 : Conveyor
+
+  Digital Outs
+  ------------
+   210 : Motor +
+   211 : Motor -
+
+  Digital Ins
+  -----------
+   127 : Sensor 0
+-----------------------------------------
+Facility #69 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   128 : Sensor 0
+-----------------------------------------
+Facility #70 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   129 : Sensor 0
+-----------------------------------------
+Facility #71 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   130 : Sensor 0
+-----------------------------------------
+Facility #72 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   131 : Sensor 0
+-----------------------------------------
+Facility #73 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   132 : Sensor 0
+-----------------------------------------
+Facility #74 : Conveyor
+
+  Digital Outs
+  ------------
+   212 : Motor +
+   213 : Motor -
+
+  Digital Ins
+  -----------
+   133 : Sensor 0
+-----------------------------------------
+Facility #75 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   134 : Sensor 0
+-----------------------------------------
+Facility #76 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   135 : Sensor 0
+-----------------------------------------
+Facility #77 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   136 : Sensor 0
+-----------------------------------------
+Facility #78 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   137 : Sensor 0
+-----------------------------------------
+Facility #79 : Roller
+
+  Digital Outs
+  ------------
+
+  Digital Ins
+  -----------
+   138 : Sensor 0
+-----------------------------------------
+Facility #80 : Conveyor
+
+  Digital Outs
+  ------------
+   214 : Motor +
+   215 : Motor -
+
+  Digital Ins
+  -----------
+   139 : Sensor 0
+-----------------------------------------
