@@ -1,93 +1,63 @@
-# IIND
+# Automation of a Production Line
 
+## Course Context
+- **MB – Industrial Informatics**
+- **Master's in Electrical and Computer Engineering**
+- **Academic Year:** 2025/2026
+- **Specification Version:** 1.0 (2026-02-27)
+- **Specification Author:** Mário de Sousa
 
+## Warning
+The customer may update the project specifications up to **21 days before the delivery deadline**.
 
-## Getting started
+## Project Overview
+This repository implements an Industrial Informatics project for a **flexible production line** simulation. The system is split into layered components that cover:
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+1. PLC-level control of equipment;
+2. SCADA supervision and operator actions;
+3. Cloud dashboard for machine/tool monitoring;
+4. MES management and execution of production;
+5. ERP order intake and production scheduling.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+The production line is simulated with **SFS (Shop Floor Simulator)** and integrated through industrial protocols (Modbus/TCP and OPC-UA), with persistence in PostgreSQL.
 
-## Add your files
+## High-Level Architecture
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+### ERP (C++)
+Headless backend listening on TCP port `6666` for JSON client orders. Computes production/purchasing plans and writes to PostgreSQL.
 
-```
-cd existing_repo
-git remote add origin https://gitlab.up.pt/up202206515/iind.git
-git branch -M main
-git push -uf origin main
-```
+### Database (PostgreSQL)
+Central persistent storage for orders, plans, and statistics so system restarts do not lose state.
 
-## Integrate with your tools
+### MES (Python)
+Reads ERP orders from PostgreSQL, applies prioritization logic, sends control commands to PLC via OPC-UA, and provides a production monitoring interface.
 
-* [Set up project integrations](https://gitlab.up.pt/up202206515/iind/-/settings/integrations)
+### SCADA (Python)
+Separate supervisory UI connected to PLC via Modbus/TCP. Monitors one selected cell (C1 to C6) and supports automatic/manual/maintenance modes.
 
-## Collaborate with your team
+### Cloud Dashboard (Python)
+Publishes tool usage and machine statistics to cloud services via MQTT or HTTP REST.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+### PLC (CODESYS / IEC 61131)
+Implements low-level deterministic control and interfaces with the Shop Floor Simulator through Modbus/TCP.
 
-## Test and Deploy
+## Repository Structure
+- [CloudDashBoard](CloudDashBoard/README.md) – Cloud telemetry and dashboard integration.
+- [ERP](ERP/README.md) – Order intake and planning backend.
+- [MES](MES/README.md) – Production execution and monitoring.
+- [PLC](PLC/README.md) – Low-level plant control logic.
+- [SCADA](SCADA/README.md) – Supervisory and operator interface.
+- [ShopFloor](ShopFloor/README.md) – Simulator assets, mappings, and plant configuration.
 
-Use the built-in continuous integration in GitLab.
+## Core Requirements Covered
+- Flexible production line automation and equipment control.
+- Supervisory interface with operator modes and alarms.
+- Cloud-based machine/tool usage dashboard.
+- MES order execution, prioritization, and statistics.
+- ERP client order reception over TCP/JSON and planning.
+- Persistent data storage for ERP/MES continuity.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## Change Log
+| Version | Date       | Changes                   |
+|---------|------------|---------------------------|
+| 1.0     | 2026-02-27 | Initial published version |
