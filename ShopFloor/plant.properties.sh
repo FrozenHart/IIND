@@ -243,21 +243,8 @@ transformation.$(( TID )).duration = 40000
 "
 TID=$((TID+1))
 echo "
-transformation.$(( TID )).initial  = 5
-transformation.$(( TID )).final    = 501
-transformation.$(( TID )).tool     = 7
-transformation.$(( TID )).duration = 1000
-"
-TID=$((TID+1))
-echo "
-transformation.$(( TID )).initial  = 85
-transformation.$(( TID )).final    = 801
-transformation.$(( TID )).tool     = 7
-transformation.$(( TID )).duration = 1000
-"
-TID=$((TID+1))
-echo "
 transformation.$(( TID )).initial  = 3
+transformation.$(( TID )).join     = 5,5
 transformation.$(( TID )).final    = 9
 transformation.$(( TID )).tool     = 8
 transformation.$(( TID )).duration = 10000
@@ -265,6 +252,7 @@ transformation.$(( TID )).duration = 10000
 TID=$((TID+1))
 echo "
 transformation.$(( TID )).initial  = 4
+transformation.$(( TID )).join     = 5,5
 transformation.$(( TID )).final    = 10
 transformation.$(( TID )).tool     = 8
 transformation.$(( TID )).duration = 10000
@@ -272,6 +260,7 @@ transformation.$(( TID )).duration = 10000
 TID=$((TID+1))
 echo "
 transformation.$(( TID )).initial  = 3
+transformation.$(( TID )).join     = 8,8
 transformation.$(( TID )).final    = 11
 transformation.$(( TID )).tool     = 9
 transformation.$(( TID )).duration = 10000
@@ -279,6 +268,7 @@ transformation.$(( TID )).duration = 10000
 TID=$((TID+1))
 echo "
 transformation.$(( TID )).initial  = 4
+transformation.$(( TID )).join     = 8,8
 transformation.$(( TID )).final    = 12
 transformation.$(( TID )).tool     = 9
 transformation.$(( TID )).duration = 10000
@@ -286,6 +276,7 @@ transformation.$(( TID )).duration = 10000
 TID=$((TID+1))
 echo "
 transformation.$(( TID )).initial  = 6
+transformation.$(( TID )).join     = 8,8
 transformation.$(( TID )).final    = 13
 transformation.$(( TID )).tool     = 8
 transformation.$(( TID )).duration = 10000
@@ -293,6 +284,7 @@ transformation.$(( TID )).duration = 10000
 TID=$((TID+1))
 echo "
 transformation.$(( TID )).initial  = 7
+transformation.$(( TID )).join     = 8,8
 transformation.$(( TID )).final    = 14
 transformation.$(( TID )).tool     = 8
 transformation.$(( TID )).duration = 10000
