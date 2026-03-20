@@ -1,0 +1,5 @@
+# Keep only project definition and Modbus maps in this folder
+*
+!.gitignore
+!*.project
+!*.csv
