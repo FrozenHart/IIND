@@ -1,0 +1,81 @@
+# ─────────────────────────────────────────────
+#  macOS
+# ─────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+Icon?
+
+# ─────────────────────────────────────────────
+#  Windows
+# ─────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ─────────────────────────────────────────────
+#  Editors & IDEs
+# ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
+*.swp
+*.swo
+*~
+
+# ─────────────────────────────────────────────
+#  General
+# ─────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+*.orig
+
+# ─────────────────────────────────────────────
+#  Codesys (PLC/)
+#  Note: PLC/.gitignore already whitelists only
+#  *.project and *.csv — this covers root-level
+#  Codesys artefacts if the project is ever
+#  opened from the repo root.
+# ─────────────────────────────────────────────
+*.compileinfo
+*.crc
+*.lck
+_CompileInfo.xml
+CompileResult/
+.cache/
+*.compiled-library
+
+# ─────────────────────────────────────────────
+#  Winlog Pro (SCADA/)
+#  The project is stored as SCADA.zip (keep).
+#  If the zip is ever extracted locally, ignore
+#  the runtime-generated files it produces.
+# ─────────────────────────────────────────────
+SCADA/*/DataLogs/
+SCADA/*/Historical*/
+SCADA/*/*.lck
+SCADA/*/Backup/
+SCADA/*/Temp/
+SCADA/*/Reports/*.pdf
+SCADA/*/Reports/*.csv
+
+# ─────────────────────────────────────────────
+#  ShopFloor (Java)
+# ─────────────────────────────────────────────
+*.class
+bin/
+out/
+build/
+ShopFloor/teste1
+
+# ─────────────────────────────────────────────
+#  Placeholder / scratch files
+# ─────────────────────────────────────────────
+temp.txt

@@ -1,5 +1,22 @@
-# Keep only project definition and Modbus maps in this folder
+# Ignore everything in the PLC folder by default,
+# then explicitly allow only the files that should be tracked.
 *
+
+# Keep this file
 !.gitignore
+
+# Codesys project definition (binary — the source of truth)
 !*.project
+
+# Modbus mapping exports (used to document/re-import the I/O map)
 !*.csv
+
+# ── What this blocks (Codesys runtime/build artefacts) ──────────────
+# *.compileinfo   — per-POU compile metadata
+# *.crc           — checksum files generated on build
+# *.bak           — automatic backups Codesys creates on save
+# *.lck           — lock file while project is open
+# _CompileInfo.xml
+# CompileResult/  — compiled application binaries
+# .cache/         — Codesys internal cache
+# *.compiled-library — pre-compiled library snapshots
