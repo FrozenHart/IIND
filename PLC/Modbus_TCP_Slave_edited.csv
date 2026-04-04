@@ -407,7 +407,13 @@ Application.GVL.Out[211];Bit3@44;;0x00D3;%QX26.3;Modbus_TCP_Slave
 Application.GVL.Out[212];Bit4@44;;0x00D4;%QX26.4;Modbus_TCP_Slave
 Application.GVL.Out[213];Bit5@44;;0x00D5;%QX26.5;Modbus_TCP_Slave
 Application.GVL.Out[214];Bit6@44;;0x00D6;%QX26.6;Modbus_TCP_Slave
-;Bit7@44;;Write Multiple Coils;%QX26.7;Modbus_TCP_Slave
+Application.GVL.Out[215];Bit7@44;M1a_done;0x00D7;%QX26.7;Modbus_TCP_Slave
+;OutputChannel[27];;Write Multiple Coils;%QB27;Modbus_TCP_Slave
+Application.GVL.Out[216];Bit0@45;M1b_done;0x00D8;%QX27.0;Modbus_TCP_Slave
+Application.GVL.Out[217];Bit1@45;M1c_done;0x00D9;%QX27.1;Modbus_TCP_Slave
+Application.GVL.Out[218];Bit2@45;M1a_Idle_Alarm;0x00DA;%QX27.2;Modbus_TCP_Slave
+Application.GVL.Out[219];Bit3@45;M1b_Idle_Alarm;0x00DB;%QX27.3;Modbus_TCP_Slave
+Application.GVL.Out[220];Bit4@45;M1c_Idle_Alarm;0x00DC;%QX27.4;Modbus_TCP_Slave
 ;Channel 2;;Write Multiple Registers;%QW14;Modbus_TCP_Slave
 ;Channel 2[0];;0x0000;%QW14;Modbus_TCP_Slave
 ;Bit0@45;;;%QX28.0;Modbus_TCP_Slave
