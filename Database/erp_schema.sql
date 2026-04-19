@@ -16,7 +16,14 @@ CREATE TABLE Orders (
     FOREIGN KEY (Client_NIF) REFERENCES Clients(NIF)
 );
 
--- 3. Create the Order Items Table
+-- 3. Simulation Clock (1 row, current_day increments each dispatch cycle)
+CREATE TABLE Simulation_State (
+    id INT PRIMARY KEY DEFAULT 1,
+    current_day INT DEFAULT 1
+);
+INSERT INTO Simulation_State (id, current_day) VALUES (1, 1);
+
+-- 4. Create the Order Items Table
 CREATE TABLE Order_Items (
     ItemID SERIAL PRIMARY KEY,
     OrderID VARCHAR(50) NOT NULL,
