@@ -9,8 +9,8 @@ test_order = {
     "NIF": 987654321,
     "OrderID": 101,
     "orders": [
-        {"type": "RWM", "quantity": 5, "DDate": 10, "Penalty": 2.0},
-        {"type": "SMM", "quantity": 4, "DDate": 15, "Penalty": 1.5}
+        {"type": "RWM", "quantity": 5, "DDate": 3, "Penalty": 2.0},
+        {"type": "SMM", "quantity": 4, "DDate": 5, "Penalty": 1.5}
     ]
 }
 
