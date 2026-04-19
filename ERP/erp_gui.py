@@ -26,14 +26,50 @@ tab1, tab2, tab3 = st.tabs(["📋 Submit Order", "📅 Production Plans", "🏭 
 # ---------------------------------------------------------------------------
 # Tab 1 — Submit Order
 # ---------------------------------------------------------------------------
+def validate_order(client_name, nif_raw, order_id_raw, order_lines):
+    """Returns a list of error strings. Empty list means valid."""
+    errors = []
+
+    if not client_name.strip():
+        errors.append("Client Name is required.")
+
+    # NIF: Portuguese tax number — exactly 9 digits
+    nif_clean = nif_raw.strip()
+    if not nif_clean:
+        errors.append("NIF is required.")
+    elif not nif_clean.isdigit():
+        errors.append("NIF must contain digits only.")
+    elif len(nif_clean) != 9:
+        errors.append(f"NIF must be exactly 9 digits (you entered {len(nif_clean)}).")
+
+    # Order ID: positive integer
+    order_id_clean = order_id_raw.strip()
+    if not order_id_clean:
+        errors.append("Order ID is required.")
+    elif not order_id_clean.isdigit() or int(order_id_clean) < 1:
+        errors.append("Order ID must be a positive whole number.")
+
+    # Order lines
+    if not order_lines:
+        errors.append("At least one order line is required.")
+    for i, line in enumerate(order_lines, start=1):
+        if line["quantity"] < 1:
+            errors.append(f"Line {i}: Quantity must be at least 1.")
+        if line["DDate"] < 1:
+            errors.append(f"Line {i}: Delivery date must be at least 1 day.")
+        if line["Penalty"] < 0:
+            errors.append(f"Line {i}: Penalty cannot be negative.")
+
+    return errors
+
 with tab1:
     st.subheader("New Client Order")
     st.caption("Order will be sent as JSON over TCP to the ERP server on port 6666.")
 
     col1, col2, col3 = st.columns(3)
-    client_name = col1.text_input("Client Name", placeholder="e.g. FEUP Furniture Co.")
-    client_nif  = col2.number_input("NIF", min_value=1, step=1, value=987654321)
-    order_id    = col3.number_input("Order ID", min_value=1, step=1, value=101)
+    client_name  = col1.text_input("Client Name", placeholder="e.g. FEUP Furniture Co.")
+    client_nif   = col2.text_input("NIF", placeholder="9-digit Portuguese tax number", max_chars=9)
+    order_id_raw = col3.text_input("Order ID", placeholder="e.g. 101")
 
     st.divider()
     st.markdown("**Order Lines**")
@@ -60,13 +96,15 @@ with tab1:
     st.divider()
 
     if st.button("📤 Submit Order", type="primary"):
-        if not client_name.strip():
-            st.error("Client name is required.")
+        errors = validate_order(client_name, client_nif, order_id_raw, st.session_state.order_lines)
+        if errors:
+            for err in errors:
+                st.error(err)
         else:
             payload = {
                 "name":    client_name.strip(),
-                "NIF":     int(client_nif),
-                "OrderID": int(order_id),
+                "NIF":     int(client_nif.strip()),
+                "OrderID": int(order_id_raw.strip()),
                 "orders":  [
                     {"type": it["type"], "quantity": it["quantity"],
                      "DDate": it["DDate"], "Penalty": it["Penalty"]}
@@ -75,15 +113,17 @@ with tab1:
             }
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(5)
                 sock.connect(('127.0.0.1', 6666))
                 sock.send(json.dumps(payload).encode('utf-8'))
                 sock.close()
-                st.success(f"✅ Order {order_id} submitted successfully!")
-                # Reset items for next order
+                st.success(f"✅ Order {order_id_raw.strip()} submitted successfully for {client_name.strip()}!")
                 st.session_state.order_lines = [{"type": "RWM", "quantity": 1, "DDate": 3, "Penalty": 2.0}]
                 st.rerun()
             except ConnectionRefusedError:
                 st.error("❌ Could not connect to ERP server. Is erp_server.py running on port 6666?")
+            except TimeoutError:
+                st.error("❌ Connection to ERP server timed out. Please try again.")
 
 # ---------------------------------------------------------------------------
 # Tab 2 — Production Plans (MPS)
