@@ -1,7 +1,13 @@
 import asyncio
 from asyncua import Client, ua
 
-BASE_NODE_PATH = "ns=4;s=|var|CODESYS Control Win V3 x64.Application.GVL"
+NAMESPACE_CANDIDATES = [4, 3, 2]
+NODE_PATH_ROOTS = [
+    "|var|CODESYS Control Win V3 x64.Application.PLC_PRG",
+    "|var|CODESYS Control Win V3.Application.PLC_PRG",
+    "|var|CODESYS Control Win V3 x64.Application.GVL",
+    "|var|CODESYS Control Win V3.Application.GVL",
+]
 
 MACHINE_TO_INPUT = {
     "M1a": "I1",
@@ -33,41 +39,68 @@ class PLCSymbolMap:
 
     def __init__(self, client):
         self.client = client
+        self._node_cache = {}
+        self._preferred_prefix = None
 
-        self.create_piece = {
-            f"I{i}": self._node(f"Create_Piece_I{i}")
-            for i in range(1, 6)
-        }
-        self.piece_material_input = {
-            f"I{i}": self._node(f"piece_material_I{i}")
-            for i in range(1, 6)
-        }
-        self.unload_req = {
-            f"U{i}": self._node(f"Unload_Req_U{i}")
-            for i in range(1, 11)
-        }
-        self.piece_material_unload = {
-            f"U{i}": self._node(f"piece_material_U{i}")
-            for i in range(1, 11)
-        }
+    @staticmethod
+    def _all_prefixes():
+        prefixes = []
+        for ns in NAMESPACE_CANDIDATES:
+            for root in NODE_PATH_ROOTS:
+                prefixes.append(f"ns={ns};s={root}")
+        return prefixes
 
-    def _node(self, symbol):
-        return self.client.get_node(f"{BASE_NODE_PATH}.{symbol}")
+    async def _resolve_node(self, symbol):
+        if symbol in self._node_cache:
+            return self._node_cache[symbol]
+
+        prefixes = self._all_prefixes()
+        if self._preferred_prefix and self._preferred_prefix in prefixes:
+            prefixes = [self._preferred_prefix] + [p for p in prefixes if p != self._preferred_prefix]
+
+        last_error = None
+        for prefix in prefixes:
+            node_id = f"{prefix}.{symbol}"
+            node = self.client.get_node(node_id)
+            try:
+                await node.read_data_value()
+                self._node_cache[symbol] = node
+                self._preferred_prefix = prefix
+                return node
+            except Exception as exc:
+                last_error = exc
+
+        raise RuntimeError(
+            f"Unable to resolve OPC-UA symbol '{symbol}'. Last error: {last_error}"
+        )
 
     async def pulse_create_piece(self, input_line, material_id):
-        if input_line not in self.create_piece or input_line not in self.piece_material_input:
+        if not input_line.startswith("I"):
             raise ValueError(f"Unknown input line: {input_line}")
 
-        await self.piece_material_input[input_line].write_value(
+        create_piece_node = await self._resolve_node(f"Create_Piece_{input_line}")
+        piece_material_node = await self._resolve_node(f"piece_material_{input_line}")
+
+        await piece_material_node.write_value(
             ua.Variant(int(material_id), ua.VariantType.UInt16)
         )
-        await self.create_piece[input_line].write_value(
+        await create_piece_node.write_value(
             ua.Variant(True, ua.VariantType.Boolean)
         )
         await asyncio.sleep(0.05)
-        await self.create_piece[input_line].write_value(
+        await create_piece_node.write_value(
             ua.Variant(False, ua.VariantType.Boolean)
         )
+
+    async def read_unload_requested(self, unload_key):
+        if not unload_key.startswith("U"):
+            raise ValueError(f"Unknown unload key: {unload_key}")
+
+        unload_req_node = await self._resolve_node(f"Unload_Req_{unload_key}")
+        piece_material_node = await self._resolve_node(f"piece_material_{unload_key}")
+        req_value = await unload_req_node.read_value()
+        material_value = await piece_material_node.read_value()
+        return bool(req_value), int(material_value)
 
 
 async def send_to_plc(machine_id, tool_id, action, operations_count=1):
@@ -122,11 +155,10 @@ async def read_unloading_snapshot():
             symbol_map = PLCSymbolMap(client)
             for i in range(1, 11):
                 key = f"U{i}"
-                req_value = await symbol_map.unload_req[key].read_value()
-                material_value = await symbol_map.piece_material_unload[key].read_value()
+                req_value, material_value = await symbol_map.read_unload_requested(key)
                 snapshot[key] = {
-                    "requested": bool(req_value),
-                    "material": int(material_value),
+                    "requested": req_value,
+                    "material": material_value,
                 }
     except Exception as exc:
         print(f"[PLC] Unable to read unloading snapshot: {exc}")

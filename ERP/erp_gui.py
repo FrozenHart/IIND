@@ -11,9 +11,34 @@ import erp_mps
 
 DB_CONFIG = dict(host="localhost", port="5000", database="erp_db", user="iind_user", password="IIND20266")
 PIECE_TYPES = ["RWW", "SWW", "RWM", "SWM", "RMM", "SMM"]
+PIECE_TYPE_LABELS = {
+    "RWW": "Round Wood-Wood",
+    "SWW": "Square Wood-Wood",
+    "RWM": "Round Wood-Metal",
+    "SWM": "Square Wood-Metal",
+    "RMM": "Round Metal-Metal",
+    "SMM": "Square Metal-Metal",
+}
 
 def get_db():
     return psycopg2.connect(**DB_CONFIG)
+
+
+def format_piece_type(piece_code):
+    code = str(piece_code).upper()
+    label = PIECE_TYPE_LABELS.get(code)
+    if label:
+        return f"{label} ({code})"
+    return str(piece_code)
+
+
+def apply_piece_labels(df, column_name):
+    if column_name not in df.columns:
+        return df
+
+    out = df.copy()
+    out[column_name] = out[column_name].apply(format_piece_type)
+    return out
 
 
 def query_dataframe(sql, params=None):
@@ -30,12 +55,12 @@ def query_dataframe(sql, params=None):
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="ERP System", page_icon="🏭", layout="wide")
-st.title("🏭 ERP — Enterprise Resource Planning")
+st.title("🏭 ERP - Enterprise Resource Planning")
 
 tab1, tab2, tab3 = st.tabs(["📋 Submit Order", "📅 Production Plans", "🏭 MES Feedback"])
 
 # ---------------------------------------------------------------------------
-# Tab 1 — Submit Order
+# Tab 1 - Submit Order
 # ---------------------------------------------------------------------------
 def validate_order(client_name, nif_raw, order_id_raw, order_lines):
     """Returns a list of error strings. Empty list means valid."""
@@ -44,7 +69,7 @@ def validate_order(client_name, nif_raw, order_id_raw, order_lines):
     if not client_name.strip():
         errors.append("Client Name is required.")
 
-    # NIF: Portuguese tax number — exactly 9 digits
+    # NIF: Portuguese tax number - exactly 9 digits
     nif_clean = nif_raw.strip()
     if not nif_clean:
         errors.append("NIF is required.")
@@ -122,7 +147,13 @@ with tab1:
     # Render each item row
     for i, item in enumerate(st.session_state.order_lines):
         c1, c2, c3, c4, c5 = st.columns([2, 1, 1, 1, 0.4])
-        item["type"]     = c1.selectbox("Piece Type", PIECE_TYPES, index=PIECE_TYPES.index(item["type"]), key=f"type_{i}")
+        item["type"]     = c1.selectbox(
+            "Piece Type",
+            PIECE_TYPES,
+            index=PIECE_TYPES.index(item["type"]),
+            key=f"type_{i}",
+            format_func=format_piece_type,
+        )
         item["quantity"] = c2.number_input("Quantity", min_value=1, value=item["quantity"], key=f"qty_{i}")
         item["DDate"]    = c3.number_input("DDate (days)", min_value=1, value=item["DDate"], key=f"ddate_{i}")
         item["Penalty"]  = c4.number_input("Penalty (€/day)", min_value=0.0, step=0.5, value=item["Penalty"], key=f"pen_{i}", format="%.2f")
@@ -186,7 +217,7 @@ with tab1:
             st.error(f"❌ Failed to parse uploaded file: {exc}")
 
 # ---------------------------------------------------------------------------
-# Tab 2 — Production Plans (MPS)
+# Tab 2 - Production Plans (MPS)
 # ---------------------------------------------------------------------------
 with tab2:
     col_day, col_refresh = st.columns([3, 1])
@@ -210,7 +241,7 @@ with tab2:
                 rows.append({
                     "Production Day": prod_day,
                     "Order ID":       o["OrderID"],
-                    "Piece":          o["Piece"],
+                    "Piece":          format_piece_type(o["Piece"]),
                     "Qty":            o["Qty"],
                     "Due Day":        o["DDate"],
                     "Penalty €/day":  o["Penalty_Per_Day"],
@@ -221,7 +252,7 @@ with tab2:
         st.subheader("Master Production Schedule")
         st.dataframe(df, width="stretch", hide_index=True)
 
-        st.subheader("🛒 Purchasing Recommendations — Day " + str(current_day))
+        st.subheader("🛒 Purchasing Recommendations - Day " + str(current_day))
         recs = erp_mps.generate_purchasing_plan(current_day, mps)
         if recs:
             for r in recs:
@@ -242,12 +273,13 @@ with tab2:
             JOIN Order_Items oi ON o.OrderID = oi.OrderID
             ORDER BY o.DDate ASC;
         """)
+        df_orders = apply_piece_labels(df_orders, "piece_type")
         st.dataframe(df_orders, width="stretch", hide_index=True)
     except Exception as e:
         st.error(f"Could not load orders: {e}")
 
 # ---------------------------------------------------------------------------
-# Tab 3 — MES Feedback
+# Tab 3 - MES Feedback
 # ---------------------------------------------------------------------------
 with tab3:
     st.subheader("🏭 Production Feedback from MES")

@@ -60,69 +60,49 @@ class MESService:
             return True
 
         try:
+            required_tables = [
+                "production_orders",
+                "machine_stats",
+                "tool_stats",
+                "machine_piece_stats",
+                "unloading_stats",
+                "simulation_state",
+            ]
+
             with self._conn() as conn:
                 cur = conn.cursor()
                 cur.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS production_orders (
-                        id SERIAL PRIMARY KEY,
-                        orderid VARCHAR(50) NOT NULL,
-                        piece_type VARCHAR(10) NOT NULL,
-                        quantity_ordered INT NOT NULL,
-                        production_day INT DEFAULT 1,
-                        quantity_produced INT DEFAULT 0,
-                        status VARCHAR(20) DEFAULT 'Pending'
-                    )
+                    SELECT tablename
+                    FROM pg_tables
+                    WHERE schemaname = 'public'
+                      AND tablename = ANY(%s)
                     """
+                    ,
+                    (required_tables,),
                 )
+                existing = {row[0] for row in cur.fetchall()}
+                missing = [name for name in required_tables if name not in existing]
+                if missing:
+                    raise RuntimeError(
+                        "Missing required table(s): "
+                        + ", ".join(missing)
+                        + "."
+                    )
+
                 cur.execute(
                     """
-                    ALTER TABLE production_orders
-                    ADD COLUMN IF NOT EXISTS production_day INT DEFAULT 1
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'production_orders'
+                      AND column_name = 'production_day'
                     """
                 )
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS machine_stats (
-                        machine_id VARCHAR(10) PRIMARY KEY,
-                        total_operating_sec INT DEFAULT 0,
-                        tool_changes INT DEFAULT 0,
-                        pieces_processed INT DEFAULT 0
+                if cur.fetchone() is None:
+                    raise RuntimeError(
+                        "Missing required column production_orders.production_day."
                     )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS tool_stats (
-                        id SERIAL PRIMARY KEY,
-                        machine_id VARCHAR(10) REFERENCES machine_stats(machine_id),
-                        tool_id VARCHAR(10) NOT NULL,
-                        operating_sec INT DEFAULT 0
-                    )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS machine_piece_stats (
-                        id SERIAL PRIMARY KEY,
-                        machine_id VARCHAR(10) REFERENCES machine_stats(machine_id),
-                        piece_type VARCHAR(10) NOT NULL,
-                        pieces_processed INT DEFAULT 0,
-                        UNIQUE(machine_id, piece_type)
-                    )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS unloading_stats (
-                        id SERIAL PRIMARY KEY,
-                        dock_id INT NOT NULL,
-                        piece_type VARCHAR(10) NOT NULL,
-                        quantity_unloaded INT DEFAULT 0
-                    )
-                    """
-                )
-                conn.commit()
 
             self._schema_ready = True
             self._schema_error_logged = False

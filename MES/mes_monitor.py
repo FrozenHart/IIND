@@ -21,6 +21,15 @@ PIECE_EST_SECONDS = {
     "SMM": 85,
 }
 
+PIECE_TYPE_LABELS = {
+    "RWW": "Round Wood-Wood",
+    "SWW": "Square Wood-Wood",
+    "RWM": "Round Wood-Metal",
+    "SWM": "Square Wood-Metal",
+    "RMM": "Round Metal-Metal",
+    "SMM": "Square Metal-Metal",
+}
+
 ALL_MACHINE_IDS = sorted(MACHINE_TOOLS.keys())
 
 
@@ -60,70 +69,58 @@ def normalize_status(status):
     return "pending"
 
 
+def format_piece_type(piece_code):
+    code = str(piece_code).upper()
+    label = PIECE_TYPE_LABELS.get(code)
+    if label:
+        return f"{label} ({code})"
+    return str(piece_code)
+
+
 def ensure_mes_schema():
+    required_tables = [
+        "production_orders",
+        "machine_stats",
+        "tool_stats",
+        "machine_piece_stats",
+        "unloading_stats",
+        "simulation_state",
+    ]
+
     with db_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS production_orders (
-                id SERIAL PRIMARY KEY,
-                orderid VARCHAR(50) NOT NULL,
-                piece_type VARCHAR(10) NOT NULL,
-                quantity_ordered INT NOT NULL,
-                production_day INT DEFAULT 1,
-                quantity_produced INT DEFAULT 0,
-                status VARCHAR(20) DEFAULT 'Pending'
-            )
-            """
+            SELECT tablename
+            FROM pg_tables
+            WHERE schemaname = 'public'
+              AND tablename = ANY(%s)
+            """,
+            (required_tables,),
         )
+        existing = {row[0] for row in cur.fetchall()}
+        missing = [name for name in required_tables if name not in existing]
+        if missing:
+            raise RuntimeError(
+                "Missing required table(s): "
+                + ", ".join(missing)
+                + ". Run Database/shared_schema.sql."
+            )
+
         cur.execute(
             """
-            ALTER TABLE production_orders
-            ADD COLUMN IF NOT EXISTS production_day INT DEFAULT 1
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'production_orders'
+              AND column_name = 'production_day'
             """
         )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS machine_stats (
-                machine_id VARCHAR(10) PRIMARY KEY,
-                total_operating_sec INT DEFAULT 0,
-                tool_changes INT DEFAULT 0,
-                pieces_processed INT DEFAULT 0
+        if cur.fetchone() is None:
+            raise RuntimeError(
+                "Missing required column production_orders.production_day. "
+                "Run Database/shared_schema.sql to apply latest schema."
             )
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tool_stats (
-                id SERIAL PRIMARY KEY,
-                machine_id VARCHAR(10) REFERENCES machine_stats(machine_id),
-                tool_id VARCHAR(10) NOT NULL,
-                operating_sec INT DEFAULT 0
-            )
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS machine_piece_stats (
-                id SERIAL PRIMARY KEY,
-                machine_id VARCHAR(10) REFERENCES machine_stats(machine_id),
-                piece_type VARCHAR(10) NOT NULL,
-                pieces_processed INT DEFAULT 0,
-                UNIQUE(machine_id, piece_type)
-            )
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS unloading_stats (
-                id SERIAL PRIMARY KEY,
-                dock_id INT NOT NULL,
-                piece_type VARCHAR(10) NOT NULL,
-                quantity_unloaded INT DEFAULT 0
-            )
-            """
-        )
-        conn.commit()
 
 
 def fetch_order_overview():
@@ -144,6 +141,7 @@ def fetch_order_overview():
                 "id": row[0],
                 "order_id": row[1],
                 "piece_type": row[2],
+                "piece_label": format_piece_type(row[2]),
                 "status": row[3],
                 "quantity_ordered": row[4],
                 "quantity_produced": row[5],
@@ -190,17 +188,18 @@ def fetch_priority_status(overview, current_day):
     )
     result = []
     for idx, row in enumerate(ranked, start=1):
-        piece = str(row["piece_type"]).upper()
+        piece_label = row.get("piece_label", format_piece_type(row["piece_type"]))
         step = "LEGS" if row["quantity_pending"] > 0 else "TOPS"
         result.append(
             {
                 "priority_rank": idx,
                 "order_id": row["order_id"],
                 "piece_type": row["piece_type"],
+                "piece_label": piece_label,
                 "pending": row["quantity_pending"],
                 "production_day": row["production_day"],
                 "algorithm_step": step,
-                "reason": f"Higher pending quantity gets higher priority ({piece}).",
+                "reason": f"Higher pending quantity gets higher priority ({piece_label}).",
             }
         )
     return result
@@ -350,7 +349,8 @@ def render_order_card(order, current_day):
     progress_value = min(1.0, max(0.0, produced / float(ordered)))
 
     with st.container(border=True):
-        st.markdown(f"**{order['order_id']} - {order['piece_type']}**")
+        piece_label = order.get("piece_label", format_piece_type(order["piece_type"]))
+        st.markdown(f"**{order['order_id']} - {piece_label}**")
         st.progress(progress_value)
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("Produced", produced)
@@ -436,7 +436,7 @@ def render_machine_stats(machine_stats, machine_tool_stats, machine_piece_stats)
                 for row in piece_rows:
                     qty = as_int(row["pieces_processed"])
                     piece_share = qty / float(total_piece_count)
-                    st.write(f"{row['piece_type']}: {qty}")
+                    st.write(f"{format_piece_type(row['piece_type'])}: {qty}")
                     st.progress(min(1.0, piece_share))
 
 
@@ -470,7 +470,7 @@ def render_unloading_stats(unloading_total, unloading_by_type):
                     denominator = max(1, sum(r["quantity_unloaded"] for r in piece_rows))
                     for row in piece_rows:
                         qty = row["quantity_unloaded"]
-                        st.write(f"{row['piece_type']}: {qty}")
+                        st.write(f"{format_piece_type(row['piece_type'])}: {qty}")
                         st.progress(min(1.0, qty / float(denominator)))
 
 
@@ -491,7 +491,8 @@ def render_priority_status(priority_status):
         with st.container(border=True):
             p_col1, p_col2, p_col3 = st.columns([1, 3, 2])
             p_col1.metric("Rank", as_int(row["priority_rank"]))
-            p_col2.markdown(f"**{row['order_id']} - {row['piece_type']}**")
+            piece_label = row.get("piece_label", format_piece_type(row["piece_type"]))
+            p_col2.markdown(f"**{row['order_id']} - {piece_label}**")
             p_col3.metric("Pending pieces", as_int(row["pending"]))
             p_col3.caption(f"Next step: {row['algorithm_step']} | Prod day: {row['production_day']}")
             st.progress(min(1.0, as_int(row["pending"]) / float(max_pending)))
@@ -576,7 +577,21 @@ def render_orders_page(snapshot):
         render_order_lane("Done", grouped_orders["completed"], "No completed orders yet.", current_day)
 
     with st.expander("All Orders (table view)", expanded=False):
-        st.dataframe(overview, width="stretch", hide_index=True)
+        table_rows = []
+        for row in overview:
+            table_rows.append(
+                {
+                    "id": row["id"],
+                    "order_id": row["order_id"],
+                    "piece": row.get("piece_label", format_piece_type(row["piece_type"])),
+                    "status": row["status"],
+                    "production_day": row["production_day"],
+                    "quantity_ordered": row["quantity_ordered"],
+                    "quantity_produced": row["quantity_produced"],
+                    "quantity_pending": row["quantity_pending"],
+                }
+            )
+        st.dataframe(table_rows, width="stretch", hide_index=True)
 
 
 def render_algorithm_page(snapshot):
@@ -598,7 +613,7 @@ def render_machine_page(snapshot):
         total_mix = sum(as_int(row["produced_total"]) for row in global_piece_mix) or 1
         for row in global_piece_mix:
             produced_total = as_int(row["produced_total"])
-            st.write(f"{row['piece_type']}: {produced_total}")
+            st.write(f"{format_piece_type(row['piece_type'])}: {produced_total}")
             st.progress(min(1.0, produced_total / float(total_mix)))
 
 
