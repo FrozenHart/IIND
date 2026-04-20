@@ -1,9 +1,9 @@
 import psycopg2
 
 DB_HOST = "localhost"
-DB_PORT = "5433"
+DB_PORT = "5000"
 DB_NAME = "erp_db"
-DB_USER = "postgres"
+DB_USER = "iind_user"
 DB_PASS = "IIND20266"
 
 SECONDS_PER_DAY = 60

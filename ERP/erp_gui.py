@@ -9,11 +9,22 @@ import pandas as pd
 import psycopg2
 import erp_mps
 
-DB_CONFIG = dict(host="localhost", port="5433", database="erp_db", user="postgres", password="IIND20266")
+DB_CONFIG = dict(host="localhost", port="5000", database="erp_db", user="iind_user", password="IIND20266")
 PIECE_TYPES = ["RWW", "SWW", "RWM", "SWM", "RMM", "SMM"]
 
 def get_db():
     return psycopg2.connect(**DB_CONFIG)
+
+
+def query_dataframe(sql, params=None):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(sql, params or ())
+    rows = cur.fetchall()
+    columns = [desc[0] for desc in cur.description]
+    cur.close()
+    conn.close()
+    return pd.DataFrame(rows, columns=columns)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -61,6 +72,36 @@ def validate_order(client_name, nif_raw, order_id_raw, order_lines):
             errors.append(f"Line {i}: Penalty cannot be negative.")
 
     return errors
+
+
+def parse_uploaded_client_orders(raw_text):
+    """Parses one or many client-order payloads from uploaded JSON text."""
+    payload = json.loads(raw_text)
+    payload_list = payload if isinstance(payload, list) else [payload]
+
+    normalized = []
+    for idx, item in enumerate(payload_list, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Entry {idx} must be a JSON object.")
+
+        for key in ("name", "NIF", "OrderID", "orders"):
+            if key not in item:
+                raise ValueError(f"Entry {idx} is missing required key: {key}")
+
+        if not isinstance(item["orders"], list) or not item["orders"]:
+            raise ValueError(f"Entry {idx} must include a non-empty 'orders' list.")
+
+        normalized.append(item)
+
+    return normalized
+
+
+def send_payload_to_erp(payload):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(5)
+    sock.connect(('127.0.0.1', 6666))
+    sock.send(json.dumps(payload).encode('utf-8'))
+    sock.close()
 
 with tab1:
     st.subheader("New Client Order")
@@ -112,11 +153,7 @@ with tab1:
                 ]
             }
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(5)
-                sock.connect(('127.0.0.1', 6666))
-                sock.send(json.dumps(payload).encode('utf-8'))
-                sock.close()
+                send_payload_to_erp(payload)
                 st.success(f"✅ Order {order_id_raw.strip()} submitted successfully for {client_name.strip()}!")
                 st.session_state.order_lines = [{"type": "RWM", "quantity": 1, "DDate": 3, "Penalty": 2.0}]
                 st.rerun()
@@ -124,6 +161,29 @@ with tab1:
                 st.error("❌ Could not connect to ERP server. Is erp_server.py running on port 6666?")
             except TimeoutError:
                 st.error("❌ Connection to ERP server timed out. Please try again.")
+
+    st.divider()
+    st.subheader("Upload Orders JSON")
+    st.caption("Upload one JSON file containing one Client Order object or a list of Client Order objects.")
+
+    uploaded_file = st.file_uploader("Choose JSON file", type=["json"])
+    if uploaded_file is not None:
+        try:
+            raw_text = uploaded_file.getvalue().decode("utf-8")
+            parsed_orders = parse_uploaded_client_orders(raw_text)
+            st.success(f"Parsed {len(parsed_orders)} client-order payload(s).")
+            st.json(parsed_orders)
+
+            if st.button("📤 Submit Uploaded JSON"):
+                sent = 0
+                for payload in parsed_orders:
+                    send_payload_to_erp(payload)
+                    sent += 1
+                st.success(f"✅ Sent {sent} payload(s) to ERP server on port 6666.")
+        except json.JSONDecodeError:
+            st.error("❌ Uploaded file is not valid JSON.")
+        except Exception as exc:
+            st.error(f"❌ Failed to parse uploaded file: {exc}")
 
 # ---------------------------------------------------------------------------
 # Tab 2 — Production Plans (MPS)
@@ -134,7 +194,7 @@ with tab2:
     current_day = erp_mps.get_current_day()
     col_day.metric("📅 Current Simulation Day", current_day, help="1 day = 60 seconds")
 
-    if col_refresh.button("🔄 Refresh", use_container_width=True):
+    if col_refresh.button("🔄 Refresh", width="stretch"):
         st.rerun()
 
     st.divider()
@@ -159,7 +219,7 @@ with tab2:
 
         df = pd.DataFrame(rows)
         st.subheader("Master Production Schedule")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
         st.subheader("🛒 Purchasing Recommendations — Day " + str(current_day))
         recs = erp_mps.generate_purchasing_plan(current_day, mps)
@@ -173,8 +233,7 @@ with tab2:
     st.divider()
     st.subheader("📦 All Orders")
     try:
-        conn = get_db()
-        df_orders = pd.read_sql("""
+        df_orders = query_dataframe("""
             SELECT o.OrderID, c.Name as Client, o.DDate, o.Penalty_Per_Day,
                    o.Status, o.Total_Cost,
                    oi.Piece_Type, oi.Quantity_Ordered, oi.Quantity_Done
@@ -182,9 +241,8 @@ with tab2:
             JOIN Clients c ON o.Client_NIF = c.NIF
             JOIN Order_Items oi ON o.OrderID = oi.OrderID
             ORDER BY o.DDate ASC;
-        """, conn)
-        conn.close()
-        st.dataframe(df_orders, use_container_width=True, hide_index=True)
+        """)
+        st.dataframe(df_orders, width="stretch", hide_index=True)
     except Exception as e:
         st.error(f"Could not load orders: {e}")
 
@@ -195,40 +253,44 @@ with tab3:
     st.subheader("🏭 Production Feedback from MES")
 
     st.info(
-        "**MES Integration Contract**\n\n"
-        "When MES completes an order, it must send the following JSON to **TCP port 6668** on this machine:\n\n"
-        "```json\n"
-        "{\n"
-        '  "OrderID": "101-RWM",\n'
-        '  "Pieces_Produced": 5,\n'
-        '  "Production_Cost": 125.50\n'
-        "}\n"
-        "```\n\n"
-        "The ERP will automatically update `Quantity_Done`, `Total_Cost`, and mark the order as `Completed`."
+        "**MES Integration Contract (Database-Only)**\n\n"
+        "MES updates ERP feedback through database writes (no ERP↔MES TCP callback).\n\n"
+        "Expected updates in `erp_db`:\n"
+        "- insert records into `Production_Feedback`\n"
+        "- update `Order_Items.Quantity_Done`\n"
+        "- update `Orders.Total_Cost` and `Orders.Status`"
     )
 
-    if st.button("🔄 Refresh Feedback", use_container_width=False):
+    if st.button("🔄 Refresh Feedback", width="content"):
         st.rerun()
 
     try:
-        conn = get_db()
-        df_feedback = pd.read_sql("""
+        df_feedback = query_dataframe("""
             SELECT pf.ID, pf.OrderID, pf.Pieces_Produced,
                    pf.Production_Cost, pf.Received_At,
                    o.Status as Order_Status
             FROM Production_Feedback pf
             JOIN Orders o ON pf.OrderID = o.OrderID
             ORDER BY pf.Received_At DESC;
-        """, conn)
-        conn.close()
+        """)
 
         if df_feedback.empty:
             st.warning("No feedback received from MES yet.")
         else:
-            st.dataframe(df_feedback, use_container_width=True, hide_index=True)
+            st.dataframe(df_feedback, width="stretch", hide_index=True)
 
             total_cost = df_feedback["Production_Cost"].sum()
             st.metric("💰 Total Production Cost Reported", f"€{total_cost:.2f}")
 
     except Exception as e:
         st.error(f"Could not load MES feedback: {e}")
+
+
+def main():
+    # Streamlit executes this script directly; this entrypoint keeps the
+    # runnable-section layout consistent with other project modules.
+    return None
+
+
+if __name__ == "__main__":
+    main()

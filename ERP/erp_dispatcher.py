@@ -1,75 +1,114 @@
 import psycopg2
-import socket
-import json
 import time
 import erp_mps
 
 DB_HOST = "localhost"
-DB_PORT = "5433"
+DB_PORT = "5000"
 DB_NAME = "erp_db"
-DB_USER = "postgres"
+DB_USER = "iind_user"
 DB_PASS = "IIND20266"
+DISPATCH_POLL_SECONDS = 2
 
 def dispatch_day(current_day):
     try:
         mps = erp_mps.generate_mps()
 
         if not mps:
-            print(f"  ✅ No pending orders in the MPS.")
-            return
+            return 0
 
-        erp_mps.print_full_mps()
-
-        # Collect all orders due for production today (production_day <= current_day)
-        todays_orders = []
+        # Queue all pending order lines into MES as soon as possible.
+        # MES will execute only when production_day is reached.
+        queued_orders = []
         for prod_day, orders in mps.items():
-            if prod_day <= current_day:
-                todays_orders.extend(orders)
+            for order in orders:
+                queued_line = dict(order)
+                queued_line["Production_Day"] = int(prod_day)
+                queued_orders.append(queued_line)
 
-        if not todays_orders:
-            print(f"  ℹ️  No production scheduled for Day {current_day}.")
-            return
+        if not queued_orders:
+            return 0
 
-        # Send to MES
-        print(f"\n  🚀 Dispatching {len(todays_orders)} order line(s) to MES...")
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.connect(('127.0.0.1', 7777))
-        client.send(json.dumps(todays_orders).encode('utf-8'))
-        client.close()
-
-        # Mark as Scheduled in DB
+        # Send to MES by inserting production orders in shared DB tables.
         conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, database=DB_NAME, user=DB_USER, password=DB_PASS)
         cur = conn.cursor()
-        dispatched_ids = list({o["OrderID"] for o in todays_orders})
-        cur.execute(
-            "UPDATE Orders SET Status = 'Scheduled' WHERE OrderID = ANY(%s);",
-            (dispatched_ids,)
+        inserted_lines = 0
+        for line in queued_orders:
+            cur.execute(
+                """
+                SELECT 1
+                FROM Production_Orders
+                WHERE OrderID = %s
+                  AND Piece_Type = %s
+                LIMIT 1;
+                """,
+                (line["OrderID"], line["Piece"]),
+            )
+            if cur.fetchone() is not None:
+                continue
+
+            cur.execute(
+                """
+                INSERT INTO Production_Orders (OrderID, Piece_Type, Quantity_Ordered, Production_Day)
+                VALUES (%s, %s, %s, %s);
+                """,
+                (line["OrderID"], line["Piece"], line["Qty"], line["Production_Day"]),
+            )
+            inserted_lines += 1
+
+        # Mark only due-now ERP orders as scheduled.
+        due_now_ids = list(
+            {
+                o["OrderID"]
+                for o in queued_orders
+                if int(o["Production_Day"]) <= int(current_day)
+            }
         )
+        if due_now_ids:
+            cur.execute(
+                "UPDATE Orders SET Status = 'Scheduled' WHERE OrderID = ANY(%s);",
+                (due_now_ids,)
+            )
         conn.commit()
         cur.close()
         conn.close()
 
-        print(f"  ✅ Dispatch complete. {len(dispatched_ids)} order(s) marked as 'Scheduled'.")
+        if inserted_lines > 0:
+            due_now = sum(1 for line in queued_orders if line["Production_Day"] <= current_day)
+            print(
+                f"  [ERP] Dispatch complete: {inserted_lines} MES line(s) queued "
+                f"(due now: {due_now}), {len(due_now_ids)} ERP order(s) marked as 'Scheduled'."
+            )
 
-    except ConnectionRefusedError:
-        print("  ❌ Could not reach MES. Is mes_server.py running on port 7777?")
+        return inserted_lines
+
     except Exception as e:
-        print(f"  ❌ Error: {e}")
+        print(f"  [ERP] Dispatch error: {e}")
+        return 0
+
+
+def _print_day_header(current_day):
+    print(f"\n{'='*60}")
+    print(f"  🕐 Simulation Day {current_day}  (real time: {current_day * erp_mps.SECONDS_PER_DAY}s elapsed)")
+    print(f"{'='*60}")
 
 def run():
-    print("🏭 ERP Dispatcher started — ticking every 60 seconds (1 tick = 1 simulation day)\n")
+    print(
+        "🏭 ERP Dispatcher started — 1 simulation day = "
+        f"{erp_mps.SECONDS_PER_DAY}s, dispatch poll = {DISPATCH_POLL_SECONDS}s\n"
+    )
+
+    current_day = erp_mps.advance_day()
+    day_started_at = time.monotonic()
+    _print_day_header(current_day)
 
     while True:
-        current_day = erp_mps.advance_day()
-
-        print(f"\n{'='*60}")
-        print(f"  🕐 Simulation Day {current_day}  (real time: {current_day * erp_mps.SECONDS_PER_DAY}s elapsed)")
-        print(f"{'='*60}")
-
         dispatch_day(current_day)
+        time.sleep(DISPATCH_POLL_SECONDS)
 
-        print(f"\n  ⏳ Waiting {erp_mps.SECONDS_PER_DAY}s for next simulation day...\n")
-        time.sleep(erp_mps.SECONDS_PER_DAY)
+        if time.monotonic() - day_started_at >= erp_mps.SECONDS_PER_DAY:
+            current_day = erp_mps.advance_day()
+            day_started_at = time.monotonic()
+            _print_day_header(current_day)
 
 if __name__ == "__main__":
     run()
