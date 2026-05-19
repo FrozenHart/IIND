@@ -8,18 +8,52 @@ MACHINE_TOOLS = {
     "M4a": ["T4", "T5", "T6"], "M4b": ["T4", "T5", "T6"], "M4c": ["T8", "T9", "T10"]
 }
 
-# Bill of Operations: Final Piece -> (Raw Material, Intermediate Tool, Final Assembly Tool)
-# Note: We simplify here to show the optimization logic.
+MACHINE_TO_CONVEYOR = {
+    "M1a": "C6",
+    "M1b": "C8",
+    "M1c": "C10",
+    "M2a": "C11",
+    "M2b": "C13",
+    "M2c": "C15",
+    "M3a": "C16",
+    "M3b": "C18",
+    "M3c": "C20",
+    "M4a": "C21",
+    "M4b": "C23",
+    "M4c": "C25",
+}
+
+TOOL_TO_SLOT = {
+    "M1a": {"T1": 0, "T2": 1, "T3": 2},
+    "M1b": {"T1": 0, "T2": 1, "T3": 2},
+    "M1c": {"T8": 0, "T9": 1, "T11": 2},
+    "M2a": {"T1": 0, "T2": 1, "T3": 2},
+    "M2b": {"T1": 0, "T2": 1, "T3": 2},
+    "M2c": {"T8": 0, "T9": 1, "T10": 2},
+    "M3a": {"T4": 0, "T5": 1, "T6": 2},
+    "M3b": {"T4": 0, "T5": 1, "T6": 2},
+    "M3c": {"T8": 0, "T9": 1, "T11": 2},
+    "M4a": {"T4": 0, "T5": 1, "T6": 2},
+    "M4b": {"T4": 0, "T5": 1, "T6": 2},
+    "M4c": {"T8": 0, "T9": 1, "T10": 2},
+}
+
+ASSEMBLY_MACHINES = {"M1c", "M2c", "M3c", "M4c"}
+
 OPERATIONS = {
-    "RWM": [{"material": "Wood", "tool": "T1", "qty": 1}, {"material": "Metal", "tool": "T5", "qty": 2}],
-    "SMM": [{"material": "Metal", "tool": "T6", "qty": 1}, {"material": "Metal", "tool": "T5", "qty": 2}]
+    "RWW": [{"tool": "T3", "qty": 2}, {"tool": "T1", "qty": 1}, {"tool": "T8", "qty": 1}],
+    "SWW": [{"tool": "T3", "qty": 2}, {"tool": "T2", "qty": 1}, {"tool": "T8", "qty": 1}],
+    "RWM": [{"tool": "T5", "qty": 2}, {"tool": "T1", "qty": 1}, {"tool": "T9", "qty": 1}],
+    "SWM": [{"tool": "T5", "qty": 2}, {"tool": "T2", "qty": 1}, {"tool": "T9", "qty": 1}],
+    "RMM": [{"tool": "T5", "qty": 2}, {"tool": "T4", "qty": 1}, {"tool": "T8", "qty": 1}],
+    "SMM": [{"tool": "T5", "qty": 2}, {"tool": "T6", "qty": 1}, {"tool": "T8", "qty": 1}],
 }
 
 def generate_optimized_schedule(daily_orders):
     """
     Takes the JSON array from the ERP and creates an optimized machine schedule.
     """
-    print("\n⚙️ Running MES Optimization Algorithm...")
+    print("\nRunning MES Optimization Algorithm")
     
     total_final_pieces = 0
     tool_queue = {}
@@ -41,10 +75,10 @@ def generate_optimized_schedule(daily_orders):
 
     # 2. Assign unloading docks (Max 6 per dock)
     docks_needed = math.ceil(total_final_pieces / 6)
-    print(f"📦 Unloading Logistics: {total_final_pieces} pieces require {docks_needed} docks.")
+    print(f"Unloading Logistics: {total_final_pieces} pieces require {docks_needed} docks.")
 
     # 3. Optimize & Assign to Machines (Grouping by tool minimizes 30s changeovers)
-    print("\n📋 OPTIMIZED MACHINE SCHEDULE:")
+    print("\nOPTIMIZED MACHINE SCHEDULE:")
     for tool, count in tool_queue.items():
         # Find the first available machine that holds this tool
         assigned_machine = next((m for m, tools in MACHINE_TOOLS.items() if tool in tools), "Unknown")

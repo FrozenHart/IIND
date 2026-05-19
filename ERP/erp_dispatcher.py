@@ -86,11 +86,6 @@ def dispatch_day(current_day):
         return 0
 
 
-def _print_day_header(current_day):
-    print(f"\n{'='*60}")
-    print(f"  🕐 Simulation Day {current_day}  (real time: {current_day * erp_mps.SECONDS_PER_DAY}s elapsed)")
-    print(f"{'='*60}")
-
 def run():
     print(
         "🏭 ERP Dispatcher started — 1 simulation day = "
@@ -99,7 +94,7 @@ def run():
 
     current_day = erp_mps.advance_day()
     day_started_at = time.monotonic()
-    _print_day_header(current_day)
+    
 
     while True:
         dispatch_day(current_day)
@@ -108,7 +103,7 @@ def run():
         if time.monotonic() - day_started_at >= erp_mps.SECONDS_PER_DAY:
             current_day = erp_mps.advance_day()
             day_started_at = time.monotonic()
-            _print_day_header(current_day)
+            
 
 if __name__ == "__main__":
     run()

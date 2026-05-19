@@ -4,60 +4,152 @@ from dataclasses import dataclass
 @dataclass
 class Operation:
     piece_type: str
-    step: str
+    action: str
     tool: str
-    quantity: int
+    duration_s: int
+    target_id: int
+    material_id: int = 0
+    req_top_id: int = 0
+    req_leg_id: int = 0
+    req_join_tool: int = 0
 
 
 class RecipeEngine:
     """Computes next MES operations with legs-before-tops policy."""
 
-    # Per final product unit: legs required and tops required.
-    REQUIRED_PARTS = {
-        "RWW": {"legs": 2, "tops": 1, "leg_tool": "T3", "top_tool": "T1"},
-        "SWW": {"legs": 2, "tops": 1, "leg_tool": "T3", "top_tool": "T2"},
-        "RWM": {"legs": 2, "tops": 1, "leg_tool": "T5", "top_tool": "T1"},
-        "SWM": {"legs": 2, "tops": 1, "leg_tool": "T5", "top_tool": "T2"},
-        "RMM": {"legs": 2, "tops": 1, "leg_tool": "T5", "top_tool": "T4"},
-        "SMM": {"legs": 2, "tops": 1, "leg_tool": "T5", "top_tool": "T6"},
+    FINAL_RECIPES = {
+        "RWW": {
+            "top_id": 3,
+            "leg_id": 5,
+            "top_tool": "T1",
+            "top_time": 30,
+            "leg_tool": "T3",
+            "leg_time": 10,
+            "join_tool": "T8",
+            "join_time": 10,
+        },
+        "SWW": {
+            "top_id": 4,
+            "leg_id": 5,
+            "top_tool": "T2",
+            "top_time": 20,
+            "leg_tool": "T3",
+            "leg_time": 10,
+            "join_tool": "T8",
+            "join_time": 10,
+        },
+        "RWM": {
+            "top_id": 3,
+            "leg_id": 8,
+            "top_tool": "T1",
+            "top_time": 30,
+            "leg_tool": "T5",
+            "leg_time": 30,
+            "join_tool": "T9",
+            "join_time": 10,
+        },
+        "SWM": {
+            "top_id": 4,
+            "leg_id": 8,
+            "top_tool": "T2",
+            "top_time": 20,
+            "leg_tool": "T5",
+            "leg_time": 30,
+            "join_tool": "T9",
+            "join_time": 10,
+        },
+        "RMM": {
+            "top_id": 6,
+            "leg_id": 8,
+            "top_tool": "T4",
+            "top_time": 35,
+            "leg_tool": "T5",
+            "leg_time": 30,
+            "join_tool": "T8",
+            "join_time": 10,
+        },
+        "SMM": {
+            "top_id": 7,
+            "leg_id": 8,
+            "top_tool": "T6",
+            "top_time": 25,
+            "leg_tool": "T5",
+            "leg_time": 30,
+            "join_tool": "T8",
+            "join_time": 10,
+        },
     }
 
-    def next_operation(self, piece_type, ordered_qty, completed_qty):
-        piece_type = piece_type.upper()
-        if piece_type not in self.REQUIRED_PARTS:
+    TOOL_TO_MATERIAL = {
+        "T1": 1,
+        "T2": 1,
+        "T3": 1,
+        "T10": 1,
+        "T4": 2,
+        "T5": 2,
+        "T6": 2,
+        "T11": 2,
+    }
+
+    def next_operation(self, piece_type, ordered_qty, completed_qty, inventory):
+        piece_type = str(piece_type).upper()
+        if piece_type not in self.FINAL_RECIPES:
             return None
 
-        remaining_final = max(0, ordered_qty - completed_qty)
+        remaining_final = max(0, int(ordered_qty) - int(completed_qty))
         if remaining_final == 0:
             return None
 
-        profile = self.REQUIRED_PARTS[piece_type]
-        legs_needed = remaining_final * profile["legs"]
-        tops_needed = remaining_final * profile["tops"]
+        profile = self.FINAL_RECIPES[piece_type]
+        legs_have = int(inventory.get("legs", 0))
+        tops_have = int(inventory.get("tops", 0))
 
-        # Hard rule from simulation behavior: produce all legs first.
+        legs_needed = max(0, remaining_final * 2 - legs_have)
+        tops_needed = max(0, remaining_final * 1 - tops_have)
+
         if legs_needed > 0:
+            material_id = self.TOOL_TO_MATERIAL[profile["leg_tool"]]
             return Operation(
                 piece_type=piece_type,
-                step="LEGS",
+                action="TRANSFORM",
                 tool=profile["leg_tool"],
-                quantity=legs_needed,
+                duration_s=profile["leg_time"],
+                target_id=profile["leg_id"],
+                material_id=material_id,
             )
 
-        return Operation(
-            piece_type=piece_type,
-            step="TOPS",
-            tool=profile["top_tool"],
-            quantity=tops_needed,
-        )
+        if tops_needed > 0:
+            material_id = self.TOOL_TO_MATERIAL[profile["top_tool"]]
+            return Operation(
+                piece_type=piece_type,
+                action="TRANSFORM",
+                tool=profile["top_tool"],
+                duration_s=profile["top_time"],
+                target_id=profile["top_id"],
+                material_id=material_id,
+            )
+
+        if legs_have >= 2 and tops_have >= 1:
+            return Operation(
+                piece_type=piece_type,
+                action="ASSEMBLE",
+                tool=profile["join_tool"],
+                duration_s=profile["join_time"],
+                target_id=_final_piece_id(piece_type),
+                req_top_id=profile["top_id"],
+                req_leg_id=profile["leg_id"],
+                req_join_tool=int(profile["join_tool"].replace("T", "")),
+            )
+
+        return None
 
 
-def main():
-    engine = RecipeEngine()
-    sample = engine.next_operation("RWW", ordered_qty=2, completed_qty=0)
-    print("[MES] Recipe engine ready.")
-    print(f"[MES] Sample operation: {sample}")
-
-
-if __name__ == "__main__":
-    main()
+def _final_piece_id(piece_type):
+    return {
+        "RWW": 9,
+        "SWW": 10,
+        "RWM": 11,
+        "SWM": 12,
+        "RMM": 13,
+        "SMM": 14,
+    }[piece_type]
