@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Client Demo Batch A",
+    "NIF": 234567891,
+    "OrderID": 1201,
+    "orders": [
+      {
+        "type": "RWW",
+        "quantity": 5,
+        "DDate": 3,
+        "Penalty": 1.5
+      },
+      {
+        "type": "SMM",
+        "quantity": 2,
+        "DDate": 5,
+        "Penalty": 2.0
+      }
+    ]
+  },
+  {
+    "name": "Client Demo Batch B",
+    "NIF": 345678912,
+    "OrderID": 1202,
+    "orders": [
+      {
+        "type": "SWM",
+        "quantity": 4,
+        "DDate": 6,
+        "Penalty": 2.2
+      }
+    ]
+  }
+]

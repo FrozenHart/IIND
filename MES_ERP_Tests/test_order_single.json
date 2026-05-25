@@ -1,0 +1,13 @@
+{
+  "name": "Client Demo Single",
+  "NIF": 123456789,
+  "OrderID": 1101,
+  "orders": [
+    {
+      "type": "RWM",
+      "quantity": 1,
+      "DDate": 2,
+      "Penalty": 2.5
+    }
+  ]
+}

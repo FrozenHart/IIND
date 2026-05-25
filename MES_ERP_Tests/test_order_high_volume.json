@@ -1,0 +1,19 @@
+{
+  "name": "Client Demo High Volume",
+  "NIF": 456789123,
+  "OrderID": 1301,
+  "orders": [
+    {
+      "type": "RWM",
+      "quantity": 8,
+      "DDate": 4,
+      "Penalty": 3.0
+    },
+    {
+      "type": "SWW",
+      "quantity": 6,
+      "DDate": 6,
+      "Penalty": 2.8
+    }
+  ]
+}
