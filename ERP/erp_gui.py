@@ -57,6 +57,8 @@ def query_dataframe(sql, params=None):
 st.set_page_config(page_title="ERP System", page_icon="🏭", layout="wide")
 st.title("🏭 ERP - Enterprise Resource Planning")
 
+st_autorefresh = getattr(st, "autorefresh", None)
+
 tab1, tab2, tab3 = st.tabs(["📋 Submit Order", "📅 Production Plans", "🏭 MES Feedback"])
 
 # ---------------------------------------------------------------------------
@@ -220,15 +222,11 @@ with tab1:
 # Tab 2 - Production Plans (MPS)
 # ---------------------------------------------------------------------------
 with tab2:
-    col_day, col_refresh = st.columns([3, 1])
-
-    current_day = erp_mps.get_current_day()
-    col_day.metric("📅 Current Simulation Day", current_day, help="1 day = 60 seconds")
-
-    if col_refresh.button("🔄 Refresh", width="stretch"):
-        st.rerun()
+    if st_autorefresh is not None:
+        st_autorefresh(interval=5000, key="erp_refresh")
 
     st.divider()
+    current_day = erp_mps.get_current_day()
     mps = erp_mps.generate_mps()
 
     if not mps:
@@ -263,20 +261,73 @@ with tab2:
     # Pending orders summary from DB
     st.divider()
     st.subheader("📦 All Orders")
+    orders_placeholder = st.empty()
     try:
-        df_orders = query_dataframe("""
-            SELECT o.OrderID, c.Name as Client, o.DDate, o.Penalty_Per_Day,
-                   o.Status, o.Total_Cost,
-                   oi.Piece_Type, oi.Quantity_Ordered, oi.Quantity_Done
-            FROM Orders o
-            JOIN Clients c ON o.Client_NIF = c.NIF
-            JOIN Order_Items oi ON o.OrderID = oi.OrderID
-            ORDER BY o.DDate ASC;
-        """)
-        df_orders = apply_piece_labels(df_orders, "piece_type")
-        st.dataframe(df_orders, width="stretch", hide_index=True)
+        orders_signature = query_dataframe(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM Orders) as order_count,
+                (SELECT COALESCE(MAX(OrderID), '') FROM Orders) as max_order_id,
+                (SELECT COUNT(*) FROM Order_Items) as item_count,
+                (SELECT COALESCE(MAX(ItemID), 0) FROM Order_Items) as max_item_id
+            """
+        )
+        signature_key = "orders_signature"
+        signature_value = tuple(orders_signature.iloc[0].tolist())
+        previous_signature = st.session_state.get(signature_key)
+        st.session_state[signature_key] = signature_value
+
+        if previous_signature != signature_value or "orders_cache" not in st.session_state:
+            df_orders = query_dataframe("""
+                SELECT o.OrderID, c.Name as Client, o.DDate, o.Penalty_Per_Day,
+                       o.Status, o.Total_Cost,
+                       oi.Piece_Type, oi.Quantity_Ordered, oi.Quantity_Done
+                FROM Orders o
+                JOIN Clients c ON o.Client_NIF = c.NIF
+                JOIN Order_Items oi ON o.OrderID = oi.OrderID
+                ORDER BY o.DDate ASC;
+            """)
+            df_orders = apply_piece_labels(df_orders, "piece_type")
+            st.session_state["orders_cache"] = df_orders
+
+        orders_placeholder.dataframe(
+            st.session_state["orders_cache"],
+            width="stretch",
+            hide_index=True,
+        )
     except Exception as e:
-        st.error(f"Could not load orders: {e}")
+        orders_placeholder.error(f"Could not load orders: {e}")
+
+    st.divider()
+    st.subheader("🛠️ Maintenance")
+    st.caption("Use these tools to reset the simulation state.")
+    confirm_wipe = st.checkbox("I understand this deletes all ERP + MES data", key="confirm_wipe")
+    if st.button("🧹 Clean Database", type="primary"):
+        if not confirm_wipe:
+            st.error("Please confirm the data wipe before continuing.")
+        else:
+            try:
+                conn = get_db()
+                cur = conn.cursor()
+                cur.execute("DELETE FROM Production_Feedback;")
+                cur.execute("DELETE FROM Unloading_Stats;")
+                cur.execute("DELETE FROM Machine_Piece_Stats;")
+                cur.execute("DELETE FROM Tool_Stats;")
+                cur.execute("DELETE FROM Machine_Stats;")
+                cur.execute("DELETE FROM Production_Orders;")
+                cur.execute("DELETE FROM Order_Items;")
+                cur.execute("DELETE FROM Orders;")
+                cur.execute("DELETE FROM Clients;")
+                cur.execute("UPDATE Simulation_State SET current_day = 0 WHERE id = 1;")
+                conn.commit()
+                cur.close()
+                conn.close()
+                st.success("Database cleaned and day reset to 0.")
+                st.session_state.pop("orders_cache", None)
+                st.session_state.pop("orders_signature", None)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Failed to clean database: {exc}")
 
 # ---------------------------------------------------------------------------
 # Tab 3 - MES Feedback
@@ -293,29 +344,40 @@ with tab3:
         "- update `Orders.Total_Cost` and `Orders.Status`"
     )
 
-    if st.button("🔄 Refresh Feedback", width="content"):
-        st.rerun()
-
+    feedback_placeholder = st.empty()
     try:
-        df_feedback = query_dataframe("""
-            SELECT pf.ID, pf.OrderID, pf.Pieces_Produced,
-                   pf.Production_Cost, pf.Received_At,
-                   o.Status as Order_Status
-            FROM Production_Feedback pf
-            JOIN Orders o ON pf.OrderID = o.OrderID
-            ORDER BY pf.Received_At DESC;
-        """)
+        feedback_signature = query_dataframe(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM Production_Feedback) as feedback_count,
+                (SELECT COALESCE(MAX(ID), 0) FROM Production_Feedback) as max_feedback_id
+            """
+        )
+        signature_key = "feedback_signature"
+        signature_value = tuple(feedback_signature.iloc[0].tolist())
+        previous_signature = st.session_state.get(signature_key)
+        st.session_state[signature_key] = signature_value
 
-        if df_feedback.empty:
-            st.warning("No feedback received from MES yet.")
+        if previous_signature != signature_value or "feedback_cache" not in st.session_state:
+            df_feedback = query_dataframe("""
+                SELECT pf.ID, pf.OrderID, pf.Pieces_Produced,
+                       pf.Production_Cost, pf.Received_At,
+                       o.Status as Order_Status
+                FROM Production_Feedback pf
+                JOIN Orders o ON pf.OrderID = o.OrderID
+                ORDER BY pf.Received_At DESC;
+            """)
+            st.session_state["feedback_cache"] = df_feedback
+
+        cached = st.session_state["feedback_cache"]
+        if cached.empty:
+            feedback_placeholder.warning("No feedback received from MES yet.")
         else:
-            st.dataframe(df_feedback, width="stretch", hide_index=True)
-
-            total_cost = df_feedback["Production_Cost"].sum()
+            feedback_placeholder.dataframe(cached, width="stretch", hide_index=True)
+            total_cost = cached["Production_Cost"].sum()
             st.metric("💰 Total Production Cost Reported", f"€{total_cost:.2f}")
-
     except Exception as e:
-        st.error(f"Could not load MES feedback: {e}")
+        feedback_placeholder.error(f"Could not load MES feedback: {e}")
 
 
 def main():

@@ -5,8 +5,8 @@
   "orders": [
     {
       "type": "RWM",
-      "quantity": 3,
-      "DDate": 4,
+      "quantity": 1,
+      "DDate": 2,
       "Penalty": 2.5
     }
   ]
