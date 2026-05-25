@@ -11,7 +11,6 @@ $$;
 
 GRANT ALL PRIVILEGES ON DATABASE erp_db TO iind_user;
 
--- 1. ERP core tables
 CREATE TABLE
     IF NOT EXISTS Clients (
         NIF VARCHAR(20) PRIMARY KEY,
@@ -61,7 +60,6 @@ CREATE TABLE
         FOREIGN KEY (OrderID) REFERENCES Orders (OrderID)
     );
 
--- 2. MES operational tables (same shared DB)
 CREATE TABLE
     IF NOT EXISTS Production_Orders (
         ID SERIAL PRIMARY KEY,

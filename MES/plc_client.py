@@ -33,6 +33,8 @@ TOOL_TO_MATERIAL = {
     "T4": 2,
     "T5": 2,
     "T6": 2,
+    "T10": 1,
+    "T11": 2,
 }
 
 MACHINE_TO_CONVEYOR = {
@@ -236,15 +238,27 @@ class PLCSymbolMap:
 
         unload_req_node = await self._resolve_node(f"Unload_Req_{unload_key}")
         unload_type_node = await self._resolve_node(f"Unload_Type_{unload_key}")
+        # Give the PLC scan a better chance to observe the pulse.
         await unload_type_node.write_value(
             ua.Variant(int(material_id), ua.VariantType.UInt16)
         )
+        await asyncio.sleep(0.05)
         await unload_req_node.write_value(
             ua.Variant(True, ua.VariantType.Boolean)
         )
-        await asyncio.sleep(0.05)
+        read_back = await unload_req_node.read_value()
+        print(
+            f"[PLC] pulse_unload_request({unload_key}, material={material_id}): "
+            f"wrote True, read_back={read_back}"
+        )
+        await asyncio.sleep(0.20)
         await unload_req_node.write_value(
             ua.Variant(False, ua.VariantType.Boolean)
+        )
+        read_back2 = await unload_req_node.read_value()
+        print(
+            f"[PLC] pulse_unload_request({unload_key}, material={material_id}): "
+            f"wrote False, read_back={read_back2}"
         )
 
     async def read_warehouse_snapshot(self):
@@ -396,6 +410,36 @@ async def send_machine_command(machine_id, command):
     except Exception as exc:
         print(f"[PLC] Unable to send machine command: {exc}")
         return False
+
+
+async def read_conveyor_state(conveyor_id):
+    url = "opc.tcp://127.0.0.1:4840"
+    try:
+        async with Client(url=url) as client:
+            sm = PLCSymbolMap(client)
+            action_node = await sm._resolve_node(f"{conveyor_id}.Action_Type")
+            free_node = await sm._resolve_node(f"{conveyor_id}.free_O")
+            action_val = int(await action_node.read_value())
+            free_val = bool(await free_node.read_value())
+            return {"action_type": action_val, "free": free_val}
+    except Exception as exc:
+        return None
+
+
+async def read_conveyor_saved_leg(conveyor_id):
+    """Returns (saved_leg1, saved_leg2) UINT values for a conveyor."""
+    url = "opc.tcp://127.0.0.1:4840"
+    try:
+        async with Client(url=url) as client:
+            sm = PLCSymbolMap(client)
+            leg1_node = await sm._resolve_node(f"{conveyor_id}.Saved_Leg1")
+            leg2_node = await sm._resolve_node(f"{conveyor_id}.Saved_Leg2")
+            leg1 = int(await leg1_node.read_value())
+            leg2 = int(await leg2_node.read_value())
+            return leg1, leg2
+    except Exception as exc:
+        print(f"[PLC] Unable to read {conveyor_id}.Saved_Leg: {exc}")
+        return None
 
 
 if __name__ == "__main__":

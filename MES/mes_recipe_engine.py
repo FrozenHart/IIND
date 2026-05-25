@@ -43,8 +43,8 @@ class RecipeEngine:
             "leg_id": 8,
             "top_tool": "T1",
             "top_time": 30,
-            "leg_tool": "T5",
-            "leg_time": 30,
+            "leg_tool": "T6",
+            "leg_time": 20,
             "join_tool": "T9",
             "join_time": 10,
         },
@@ -53,8 +53,8 @@ class RecipeEngine:
             "leg_id": 8,
             "top_tool": "T2",
             "top_time": 20,
-            "leg_tool": "T5",
-            "leg_time": 30,
+            "leg_tool": "T6",
+            "leg_time": 20,
             "join_tool": "T9",
             "join_time": 10,
         },
@@ -63,18 +63,18 @@ class RecipeEngine:
             "leg_id": 8,
             "top_tool": "T4",
             "top_time": 35,
-            "leg_tool": "T5",
-            "leg_time": 30,
+            "leg_tool": "T6",
+            "leg_time": 20,
             "join_tool": "T8",
             "join_time": 10,
         },
         "SMM": {
             "top_id": 7,
             "leg_id": 8,
-            "top_tool": "T6",
+            "top_tool": "T5",
             "top_time": 25,
-            "leg_tool": "T5",
-            "leg_time": 30,
+            "leg_tool": "T6",
+            "leg_time": 20,
             "join_tool": "T8",
             "join_time": 10,
         },
@@ -92,6 +92,18 @@ class RecipeEngine:
     }
 
     def next_operation(self, piece_type, ordered_qty, completed_qty, inventory):
+        """Return the next single pending operation (legacy)."""
+        batch = self.next_batch(piece_type, ordered_qty, completed_qty, inventory)
+        if batch:
+            return batch[0]
+        return None
+
+    def next_batch(self, piece_type, ordered_qty, completed_qty, inventory):
+        """Return ALL pending operations for the current order state.
+
+        Returns a list of TRANSFORM ops for all needed legs/tops,
+        or [ASSEMBLE] when all parts are ready, or None if nothing to do.
+        """
         piece_type = str(piece_type).upper()
         if piece_type not in self.FINAL_RECIPES:
             return None
@@ -107,30 +119,32 @@ class RecipeEngine:
         legs_needed = max(0, remaining_final * 2 - legs_have)
         tops_needed = max(0, remaining_final * 1 - tops_have)
 
-        if legs_needed > 0:
+        ops = []
+
+        for _ in range(legs_needed):
             material_id = self.TOOL_TO_MATERIAL[profile["leg_tool"]]
-            return Operation(
+            ops.append(Operation(
                 piece_type=piece_type,
                 action="TRANSFORM",
                 tool=profile["leg_tool"],
                 duration_s=profile["leg_time"],
                 target_id=profile["leg_id"],
                 material_id=material_id,
-            )
+            ))
 
-        if tops_needed > 0:
+        for _ in range(tops_needed):
             material_id = self.TOOL_TO_MATERIAL[profile["top_tool"]]
-            return Operation(
+            ops.append(Operation(
                 piece_type=piece_type,
                 action="TRANSFORM",
                 tool=profile["top_tool"],
                 duration_s=profile["top_time"],
                 target_id=profile["top_id"],
                 material_id=material_id,
-            )
+            ))
 
-        if legs_have >= 2 and tops_have >= 1:
-            return Operation(
+        if legs_needed == 0 and tops_needed == 0 and legs_have >= 2 and tops_have >= 1:
+            ops.append(Operation(
                 piece_type=piece_type,
                 action="ASSEMBLE",
                 tool=profile["join_tool"],
@@ -139,9 +153,9 @@ class RecipeEngine:
                 req_top_id=profile["top_id"],
                 req_leg_id=profile["leg_id"],
                 req_join_tool=int(profile["join_tool"].replace("T", "")),
-            )
+            ))
 
-        return None
+        return ops if ops else None
 
 
 def _final_piece_id(piece_type):
