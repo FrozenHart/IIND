@@ -1,0 +1,20 @@
+(*
+  GVL_MQTT — Global Variable List for ThingsBoard MQTT connection
+  Paste this into a new GVL named "GVL_MQTT" in CODESYS Library Manager.
+  Requires: MQTT Library.library added to the project.
+*)
+
+VAR_GLOBAL
+    // Publisher — sends PLC I/O telemetry to ThingsBoard PLC_Gateway device
+    fbMQTT_Pub          : FB_MQTTClient;
+
+    // Subscriber — receives RPC commands from ThingsBoard
+    fbMQTT_Sub          : FB_MQTTClient;
+
+    // 2-second publish timer
+    tPublishTimer       : TON;
+
+    // RPC command handling
+    sRPCMessage         : STRING(1024);
+    bNewRPC             : BOOL;
+END_VAR

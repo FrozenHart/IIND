@@ -1,0 +1,110 @@
+(*
+  PRG_MQTT — MQTT telemetry publisher and RPC subscriber
+  Paste this into a new Program named "PRG_MQTT" in CODESYS.
+  Call PRG_MQTT from the main task (same task as PLC_PRG).
+
+  ThingsBoard device: PLC_Gateway
+  Access token:       5FT2jeSK3hla6ZWBnrQU
+
+  Publishes 3 payload groups every 2 seconds (255-char limit per publish):
+    Group 1 — Input line signals   : Create_Piece_I1..I4, piece_material_I1..I4
+    Group 2 — Unload requests      : Unload_Req_U1..U10
+    Group 3 — Unload material type : Unload_Type_U1..U10
+    Group 4 — Warehouse counts     : W1_Count, W2_Count
+*)
+
+// ── Publisher configuration ───────────────────────────────────────────────
+GVL_MQTT.fbMQTT_Pub.i_xEnable        := TRUE;
+GVL_MQTT.fbMQTT_Pub.i_sBrokerAddress := 'thingsboard.cloud';
+GVL_MQTT.fbMQTT_Pub.i_uiPort         := 1883;
+GVL_MQTT.fbMQTT_Pub.i_sUsername      := '5FT2jeSK3hla6ZWBnrQU';
+GVL_MQTT.fbMQTT_Pub.i_sPassword      := '';
+GVL_MQTT.fbMQTT_Pub.i_sClientID      := 'codesys-plc-pub';
+GVL_MQTT.fbMQTT_Pub.i_sTopicPublish  := 'v1/devices/me/telemetry';
+GVL_MQTT.fbMQTT_Pub.i_xRetain        := FALSE;
+GVL_MQTT.fbMQTT_Pub.i_xAutoReconnect := TRUE;
+
+// ── Subscriber configuration ──────────────────────────────────────────────
+GVL_MQTT.fbMQTT_Sub.i_xEnable         := TRUE;
+GVL_MQTT.fbMQTT_Sub.i_sBrokerAddress  := 'thingsboard.cloud';
+GVL_MQTT.fbMQTT_Sub.i_uiPort          := 1883;
+GVL_MQTT.fbMQTT_Sub.i_sUsername       := '5FT2jeSK3hla6ZWBnrQU';
+GVL_MQTT.fbMQTT_Sub.i_sPassword       := '';
+GVL_MQTT.fbMQTT_Sub.i_sClientID       := 'codesys-plc-sub';
+GVL_MQTT.fbMQTT_Sub.i_sTopicSubscribe := 'v1/devices/me/rpc/request/+';
+GVL_MQTT.fbMQTT_Sub.i_xSubscribe      := TRUE;
+GVL_MQTT.fbMQTT_Sub.i_xAutoReconnect  := TRUE;
+
+// ── Publish telemetry every 2 seconds ────────────────────────────────────
+GVL_MQTT.tPublishTimer(IN := TRUE, PT := T#2S);
+
+IF GVL_MQTT.tPublishTimer.Q THEN
+    GVL_MQTT.tPublishTimer(IN := FALSE);
+
+    // Group 1: Input line signals (~150 chars)
+    FC_AddKeyValueToJSON('create_piece_I1',   BOOL_TO_STRING(GVL.Create_Piece_I1));
+    FC_AddKeyValueToJSON('create_piece_I2',   BOOL_TO_STRING(GVL.Create_Piece_I2));
+    FC_AddKeyValueToJSON('create_piece_I3',   BOOL_TO_STRING(GVL.Create_Piece_I3));
+    FC_AddKeyValueToJSON('create_piece_I4',   BOOL_TO_STRING(GVL.Create_Piece_I4));
+    FC_AddKeyValueToJSON('piece_material_I1', UINT_TO_STRING(GVL.piece_material_I1));
+    FC_AddKeyValueToJSON('piece_material_I2', UINT_TO_STRING(GVL.piece_material_I2));
+    FC_AddKeyValueToJSON('piece_material_I3', UINT_TO_STRING(GVL.piece_material_I3));
+    FC_AddKeyValueToJSON('piece_material_I4', UINT_TO_STRING(GVL.piece_material_I4));
+    GVL_MQTT.fbMQTT_Pub.i_sPayload := FC_CreateJSON();
+    GVL_MQTT.fbMQTT_Pub.i_xPublish := TRUE;
+    GVL_MQTT.fbMQTT_Pub();
+    GVL_MQTT.fbMQTT_Pub.i_xPublish := FALSE;
+
+    // Group 2: Unload request signals (~180 chars)
+    FC_AddKeyValueToJSON('unload_req_U1',  BOOL_TO_STRING(GVL.Unload_Req_U1));
+    FC_AddKeyValueToJSON('unload_req_U2',  BOOL_TO_STRING(GVL.Unload_Req_U2));
+    FC_AddKeyValueToJSON('unload_req_U3',  BOOL_TO_STRING(GVL.Unload_Req_U3));
+    FC_AddKeyValueToJSON('unload_req_U4',  BOOL_TO_STRING(GVL.Unload_Req_U4));
+    FC_AddKeyValueToJSON('unload_req_U5',  BOOL_TO_STRING(GVL.Unload_Req_U5));
+    FC_AddKeyValueToJSON('unload_req_U6',  BOOL_TO_STRING(GVL.Unload_Req_U6));
+    FC_AddKeyValueToJSON('unload_req_U7',  BOOL_TO_STRING(GVL.Unload_Req_U7));
+    FC_AddKeyValueToJSON('unload_req_U8',  BOOL_TO_STRING(GVL.Unload_Req_U8));
+    FC_AddKeyValueToJSON('unload_req_U9',  BOOL_TO_STRING(GVL.Unload_Req_U9));
+    FC_AddKeyValueToJSON('unload_req_U10', BOOL_TO_STRING(GVL.Unload_Req_U10));
+    GVL_MQTT.fbMQTT_Pub.i_sPayload := FC_CreateJSON();
+    GVL_MQTT.fbMQTT_Pub.i_xPublish := TRUE;
+    GVL_MQTT.fbMQTT_Pub();
+    GVL_MQTT.fbMQTT_Pub.i_xPublish := FALSE;
+
+    // Group 3: Unload material type per dock (~190 chars)
+    FC_AddKeyValueToJSON('unload_type_U1',  UINT_TO_STRING(GVL.Unload_Type_U1));
+    FC_AddKeyValueToJSON('unload_type_U2',  UINT_TO_STRING(GVL.Unload_Type_U2));
+    FC_AddKeyValueToJSON('unload_type_U3',  UINT_TO_STRING(GVL.Unload_Type_U3));
+    FC_AddKeyValueToJSON('unload_type_U4',  UINT_TO_STRING(GVL.Unload_Type_U4));
+    FC_AddKeyValueToJSON('unload_type_U5',  UINT_TO_STRING(GVL.Unload_Type_U5));
+    FC_AddKeyValueToJSON('unload_type_U6',  UINT_TO_STRING(GVL.Unload_Type_U6));
+    FC_AddKeyValueToJSON('unload_type_U7',  UINT_TO_STRING(GVL.Unload_Type_U7));
+    FC_AddKeyValueToJSON('unload_type_U8',  UINT_TO_STRING(GVL.Unload_Type_U8));
+    FC_AddKeyValueToJSON('unload_type_U9',  UINT_TO_STRING(GVL.Unload_Type_U9));
+    FC_AddKeyValueToJSON('unload_type_U10', UINT_TO_STRING(GVL.Unload_Type_U10));
+    GVL_MQTT.fbMQTT_Pub.i_sPayload := FC_CreateJSON();
+    GVL_MQTT.fbMQTT_Pub.i_xPublish := TRUE;
+    GVL_MQTT.fbMQTT_Pub();
+    GVL_MQTT.fbMQTT_Pub.i_xPublish := FALSE;
+
+    // Group 4: Warehouse counts (~50 chars)
+    FC_AddKeyValueToJSON('W1_count', UINT_TO_STRING(GVL.W1_Count));
+    FC_AddKeyValueToJSON('W2_count', UINT_TO_STRING(GVL.W2_Count));
+    GVL_MQTT.fbMQTT_Pub.i_sPayload := FC_CreateJSON();
+    GVL_MQTT.fbMQTT_Pub.i_xPublish := TRUE;
+    GVL_MQTT.fbMQTT_Pub();
+    GVL_MQTT.fbMQTT_Pub.i_xPublish := FALSE;
+
+END_IF
+
+// ── Call subscriber FB every scan ─────────────────────────────────────────
+GVL_MQTT.fbMQTT_Sub();
+
+// ── Handle incoming RPC commands from ThingsBoard ─────────────────────────
+IF GVL_MQTT.fbMQTT_Sub.q_xReceivedMessageNotification THEN
+    GVL_MQTT.sRPCMessage := GVL_MQTT.fbMQTT_Sub.q_sLastReceivedMessage;
+    GVL_MQTT.bNewRPC     := TRUE;
+    // Example payload: {"method":"create_piece","params":{"line":1,"material":2}}
+    // Add FIND/MID string parsing here to extract method and params,
+    // then pulse the appropriate GVL variable for one scan cycle.
+END_IF

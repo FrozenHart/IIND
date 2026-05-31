@@ -121,8 +121,12 @@ The Access Token for each device is used as `i_sUsername` in `FB_MQTTClient` (pa
 
 1. Open `PLC/PLC.project` in CODESYS IDE
 2. Navigate to **Library Manager** in the project tree
-3. Click **Add Library → Browse** and select `MQTT Library.library`
+3. Click **Add Library → Browse** and select `~/Downloads/MQTT Library.library`
 4. Confirm it appears in the library list alongside `Standard` and `SysSocket`
+
+The ready-to-paste code for steps 2.2 and 2.3 is in:
+- `PLC/GVL_MQTT.iecst` — paste into a new GVL named `GVL_MQTT`
+- `PLC/PRG_MQTT.iecst` — paste into a new Program named `PRG_MQTT`
 
 ### 2.2 Global Variable List — GVL_MQTT
 
@@ -213,17 +217,25 @@ IF tPublishTimer.Q THEN
     fbMQTT_Pub();
     fbMQTT_Pub.i_xPublish  := FALSE;
 
-    // Group 3: Piece material at unload docks (U1–U10)
-    FC_AddKeyValueToJSON('piece_material_U1',  INT_TO_STRING(GVL.piece_material_U1));
-    FC_AddKeyValueToJSON('piece_material_U2',  INT_TO_STRING(GVL.piece_material_U2));
-    FC_AddKeyValueToJSON('piece_material_U3',  INT_TO_STRING(GVL.piece_material_U3));
-    FC_AddKeyValueToJSON('piece_material_U4',  INT_TO_STRING(GVL.piece_material_U4));
-    FC_AddKeyValueToJSON('piece_material_U5',  INT_TO_STRING(GVL.piece_material_U5));
-    FC_AddKeyValueToJSON('piece_material_U6',  INT_TO_STRING(GVL.piece_material_U6));
-    FC_AddKeyValueToJSON('piece_material_U7',  INT_TO_STRING(GVL.piece_material_U7));
-    FC_AddKeyValueToJSON('piece_material_U8',  INT_TO_STRING(GVL.piece_material_U8));
-    FC_AddKeyValueToJSON('piece_material_U9',  INT_TO_STRING(GVL.piece_material_U9));
-    FC_AddKeyValueToJSON('piece_material_U10', INT_TO_STRING(GVL.piece_material_U10));
+    // Group 3: Unload material type per dock (U1–U10) — correct variable: Unload_Type_U*
+    FC_AddKeyValueToJSON('unload_type_U1',  UINT_TO_STRING(GVL.Unload_Type_U1));
+    FC_AddKeyValueToJSON('unload_type_U2',  UINT_TO_STRING(GVL.Unload_Type_U2));
+    FC_AddKeyValueToJSON('unload_type_U3',  UINT_TO_STRING(GVL.Unload_Type_U3));
+    FC_AddKeyValueToJSON('unload_type_U4',  UINT_TO_STRING(GVL.Unload_Type_U4));
+    FC_AddKeyValueToJSON('unload_type_U5',  UINT_TO_STRING(GVL.Unload_Type_U5));
+    FC_AddKeyValueToJSON('unload_type_U6',  UINT_TO_STRING(GVL.Unload_Type_U6));
+    FC_AddKeyValueToJSON('unload_type_U7',  UINT_TO_STRING(GVL.Unload_Type_U7));
+    FC_AddKeyValueToJSON('unload_type_U8',  UINT_TO_STRING(GVL.Unload_Type_U8));
+    FC_AddKeyValueToJSON('unload_type_U9',  UINT_TO_STRING(GVL.Unload_Type_U9));
+    FC_AddKeyValueToJSON('unload_type_U10', UINT_TO_STRING(GVL.Unload_Type_U10));
+    fbMQTT_Pub.i_sPayload  := FC_CreateJSON();
+    fbMQTT_Pub.i_xPublish  := TRUE;
+    fbMQTT_Pub();
+    fbMQTT_Pub.i_xPublish  := FALSE;
+
+    // Group 4: Warehouse counts
+    FC_AddKeyValueToJSON('W1_count', UINT_TO_STRING(GVL.W1_Count));
+    FC_AddKeyValueToJSON('W2_count', UINT_TO_STRING(GVL.W2_Count));
     fbMQTT_Pub.i_sPayload  := FC_CreateJSON();
     fbMQTT_Pub.i_xPublish  := TRUE;
     fbMQTT_Pub();
@@ -253,7 +265,8 @@ Each `FC_CreateJSON()` call produces at most:
 |---|---|---|
 | Input lines | `create_piece_I1..I4`, `piece_material_I1..I4` | ~150 |
 | Unload requests | `unload_req_U1..U10` | ~180 |
-| Dock materials | `piece_material_U1..U10` | ~190 |
+| Unload types | `unload_type_U1..U10` | ~190 |
+| Warehouse | `W1_count`, `W2_count` | ~50 |
 
 ### 2.5 Diagnostic Monitoring
 
@@ -423,6 +436,6 @@ PostgreSQL simulation_state ──┘       │
 
 - [x] Copy `PLC_Gateway`, `MES_Monitor`, `ERP_Monitor` access tokens from ThingsBoard and substitute placeholders above
 - [ ] Verify PLC network allows outbound TCP to `thingsboard.cloud:1883`
-- [ ] Confirm exact GVL variable names match what is declared in `PLC.project`
+- [x] Confirm exact GVL variable names match what is declared in `PLC.project`
 - [ ] Decide whether RPC command handling (cloud → PLC write) is in scope
 - [ ] Test payload length for each group stays under 255 chars with real variable names
