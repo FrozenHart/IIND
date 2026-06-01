@@ -1,3 +1,4 @@
 psycopg2-binary
 asyncua
 streamlit
+paho-mqtt>=2.0
