@@ -1,5 +1,83 @@
 import asyncio
+import threading
 from asyncua import Client, ua
+
+OPC_URL = "opc.tcp://127.0.0.1:4840"
+_bg_loop = None
+_bg_thread = None
+_bg_client = None
+_bg_lock = threading.Lock()
+_bg_client_lock = None  # initialized inside the background loop
+
+
+def _get_bg_loop():
+    global _bg_loop, _bg_thread
+    with _bg_lock:
+        if _bg_loop is None:
+            _bg_loop = asyncio.new_event_loop()
+            _bg_thread = threading.Thread(
+                target=_bg_loop.run_forever,
+                daemon=True,
+                name="OPCUA_BgThread"
+            )
+            _bg_thread.start()
+        return _bg_loop
+
+
+async def _get_bg_client_async():
+    global _bg_client, _bg_client_lock
+    if _bg_client_lock is None:
+        _bg_client_lock = asyncio.Lock()
+
+    async with _bg_client_lock:
+        if _bg_client is not None:
+            try:
+                # Health check: read standard ServerStatus.CurrentTime
+                # (ns=0;i=2258) which always has a Value attribute.
+                status_node = _bg_client.get_node("ns=0;i=2258")
+                await status_node.read_value()
+                return _bg_client
+            except Exception as e:
+                print(f"[PLC] Health check failed: {e}. Forcing reconnect.")
+                try:
+                    await _bg_client.disconnect()
+                except Exception:
+                    pass
+                _bg_client = None
+
+        # Reconnect
+        _bg_client = Client(url=OPC_URL)
+        # Use a timeout to avoid hanging indefinitely
+        await asyncio.wait_for(_bg_client.connect(), timeout=5.0)
+        return _bg_client
+
+
+async def _run_async_on_bg(coro):
+    """Schedules a coroutine on the background loop and awaits its completion on the caller loop."""
+    loop = _get_bg_loop()
+    fut = asyncio.run_coroutine_threadsafe(coro, loop)
+    return await asyncio.wrap_future(fut)
+
+
+async def close_client():
+    global _bg_client, _bg_loop
+    if _bg_loop is not None and _bg_client is not None:
+        async def _disconnect():
+            global _bg_client
+            if _bg_client is not None:
+                try:
+                    await _bg_client.disconnect()
+                except Exception:
+                    pass
+                _bg_client = None
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_disconnect(), _bg_loop)
+            await asyncio.wrap_future(fut)
+        except Exception:
+            pass
+    return None
+
 
 NAMESPACE_CANDIDATES = [4, 3, 2]
 NODE_PATH_ROOTS = [
@@ -275,168 +353,183 @@ class PLCSymbolMap:
 
 
 async def send_to_plc(machine_id, tool_id, action, operations_count=1, input_line=None):
-    url = "opc.tcp://127.0.0.1:4840"
+    async def _impl():
+        client = await _get_bg_client_async()
+        symbol_map = PLCSymbolMap(client)
+        nonlocal input_line
+        if input_line is None:
+            input_line = MACHINE_TO_INPUT.get(machine_id)
+        material_id = TOOL_TO_MATERIAL.get(tool_id)
+
+        if action == "CREATE":
+            if not input_line:
+                print(f"[PLC] No input-line mapping found for machine {machine_id}.")
+                return False
+            if material_id is None:
+                print(
+                    f"[PLC] Tool {tool_id} is not a raw transformation tool. "
+                    "Skipping create-piece pulse."
+                )
+                return False
+
+            for _ in range(max(1, int(operations_count))):
+                await symbol_map.pulse_create_piece(input_line, material_id)
+
+            print(
+                "[PLC] Dispatch completed via mapped variables: "
+                f"Create_Piece_{input_line}, piece_material_{input_line}={material_id}, "
+                f"operations={max(1, int(operations_count))}."
+            )
+            return True
+
+        print(f"[PLC] Unsupported action for create-piece flow: {action}.")
+        return False
 
     try:
-        async with Client(url=url) as client:
-            try:
-                symbol_map = PLCSymbolMap(client)
-                if input_line is None:
-                    input_line = MACHINE_TO_INPUT.get(machine_id)
-                material_id = TOOL_TO_MATERIAL.get(tool_id)
-
-                if action == "CREATE":
-                    if not input_line:
-                        print(f"[PLC] No input-line mapping found for machine {machine_id}.")
-                        return False
-                    if material_id is None:
-                        print(
-                            f"[PLC] Tool {tool_id} is not a raw transformation tool. "
-                            "Skipping create-piece pulse."
-                        )
-                        return False
-
-                    for _ in range(max(1, int(operations_count))):
-                        await symbol_map.pulse_create_piece(input_line, material_id)
-
-                    print(
-                        "[PLC] Dispatch completed via mapped variables: "
-                        f"Create_Piece_{input_line}, piece_material_{input_line}={material_id}, "
-                        f"operations={max(1, int(operations_count))}."
-                    )
-                    return True
-
-                print(f"[PLC] Unsupported action for create-piece flow: {action}.")
-                return False
-
-            except Exception as exc:
-                print(f"[PLC] Failed to write to OPC-UA node: {exc}")
-                return False
-
+        return await _run_async_on_bg(_impl())
     except Exception as exc:
-        print(f"[PLC] Connection failed. Verify Codesys OPC-UA server status. Error: {exc}")
+        print(f"[PLC] Failed to write to OPC-UA node: {exc}")
         return False
 
 
 async def read_unloading_snapshot():
     """Reads unload request/material nodes U1..U10 for MES statistics."""
-    url = "opc.tcp://127.0.0.1:4840"
-    snapshot = {}
+    async def _impl():
+        client = await _get_bg_client_async()
+        symbol_map = PLCSymbolMap(client)
+        snapshot = {}
+        for i in range(1, 11):
+            key = f"U{i}"
+            req_value, material_value = await symbol_map.read_unload_requested(key)
+            snapshot[key] = {
+                "requested": req_value,
+                "material": material_value,
+            }
+        return snapshot
 
     try:
-        async with Client(url=url) as client:
-            symbol_map = PLCSymbolMap(client)
-            for i in range(1, 11):
-                key = f"U{i}"
-                req_value, material_value = await symbol_map.read_unload_requested(key)
-                snapshot[key] = {
-                    "requested": req_value,
-                    "material": material_value,
-                }
+        return await _run_async_on_bg(_impl())
     except Exception as exc:
         print(f"[PLC] Unable to read unloading snapshot: {exc}")
-
-    return snapshot
+        return {}
 
 
 async def read_warehouse_counts():
-    url = "opc.tcp://127.0.0.1:4840"
+    async def _impl():
+        client = await _get_bg_client_async()
+        symbol_map = PLCSymbolMap(client)
+        w1_node = await symbol_map._resolve_node("W1_Count")
+        w2_node = await symbol_map._resolve_node("W2_Count")
+        w1_value = await w1_node.read_value()
+        w2_value = await w2_node.read_value()
+        return int(w1_value), int(w2_value)
+
     try:
-        async with Client(url=url) as client:
-            symbol_map = PLCSymbolMap(client)
-            w1_node = await symbol_map._resolve_node("W1_Count")
-            w2_node = await symbol_map._resolve_node("W2_Count")
-            w1_value = await w1_node.read_value()
-            w2_value = await w2_node.read_value()
-            return int(w1_value), int(w2_value)
+        return await _run_async_on_bg(_impl())
     except Exception as exc:
         print(f"[PLC] Unable to read warehouse counts: {exc}")
         return None
 
 
 async def read_warehouse_snapshot():
-    url = "opc.tcp://127.0.0.1:4840"
+    async def _impl():
+        client = await _get_bg_client_async()
+        symbol_map = PLCSymbolMap(client)
+        return await symbol_map.read_warehouse_snapshot()
+
     try:
-        async with Client(url=url) as client:
-            symbol_map = PLCSymbolMap(client)
-            return await symbol_map.read_warehouse_snapshot()
+        return await _run_async_on_bg(_impl())
+    except asyncio.CancelledError:
+        return None
     except Exception as exc:
         print(f"[PLC] Unable to read warehouse snapshot: {exc}")
         return None
 
 
 async def pulse_unload_request(unload_key, material_id=0, pulses=1):
-    url = "opc.tcp://127.0.0.1:4840"
+    async def _impl():
+        client = await _get_bg_client_async()
+        symbol_map = PLCSymbolMap(client)
+        for _ in range(max(1, int(pulses))):
+            await symbol_map.pulse_unload_request(unload_key, material_id)
+        return True
+
     try:
-        async with Client(url=url) as client:
-            symbol_map = PLCSymbolMap(client)
-            for _ in range(max(1, int(pulses))):
-                await symbol_map.pulse_unload_request(unload_key, material_id)
-            return True
+        return await _run_async_on_bg(_impl())
     except Exception as exc:
         print(f"[PLC] Unable to pulse unload request {unload_key}: {exc}")
         return False
 
 
 async def write_tool_configuration(tool_map, tool_times):
-    url = "opc.tcp://127.0.0.1:4840"
+    async def _impl():
+        client = await _get_bg_client_async()
+        symbol_map = PLCSymbolMap(client)
+        await symbol_map.write_tool_configuration(tool_map, tool_times)
+        return True
+
     try:
-        async with Client(url=url) as client:
-            symbol_map = PLCSymbolMap(client)
-            await symbol_map.write_tool_configuration(tool_map, tool_times)
-            return True
+        return await _run_async_on_bg(_impl())
     except Exception as exc:
         print(f"[PLC] Unable to write tool configuration: {exc}")
         return False
 
 
 async def send_machine_command(machine_id, command):
-    url = "opc.tcp://127.0.0.1:4840"
     conveyor_id = MACHINE_TO_CONVEYOR.get(machine_id)
     if not conveyor_id:
         print(f"[PLC] No conveyor mapping found for machine {machine_id}.")
         return False
 
+    async def _impl():
+        client = await _get_bg_client_async()
+        symbol_map = PLCSymbolMap(client)
+        await symbol_map.write_machine_command(conveyor_id, command)
+        print(
+            f"[PLC] Command sent to {conveyor_id}: action={command['action_type']}, "
+            f"tool_slot={command['needed_tool_slot']}, target={command['target_id']}, "
+            f"time_ms={command['process_ms']}."
+        )
+        return True
+
     try:
-        async with Client(url=url) as client:
-            symbol_map = PLCSymbolMap(client)
-            await symbol_map.write_machine_command(conveyor_id, command)
-            print(
-                f"[PLC] Command sent to {conveyor_id}: action={command['action_type']}, "
-                f"tool_slot={command['needed_tool_slot']}, target={command['target_id']}, "
-                f"time_ms={command['process_ms']}."
-            )
-            return True
+        return await _run_async_on_bg(_impl())
     except Exception as exc:
         print(f"[PLC] Unable to send machine command: {exc}")
         return False
 
 
 async def read_conveyor_state(conveyor_id):
-    url = "opc.tcp://127.0.0.1:4840"
+    async def _impl():
+        client = await _get_bg_client_async()
+        sm = PLCSymbolMap(client)
+        action_node = await sm._resolve_node(f"{conveyor_id}.Action_Type")
+        free_node = await sm._resolve_node(f"{conveyor_id}.free_O")
+        action_val = int(await action_node.read_value())
+        free_val = bool(await free_node.read_value())
+        return {"action_type": action_val, "free": free_val}
+
     try:
-        async with Client(url=url) as client:
-            sm = PLCSymbolMap(client)
-            action_node = await sm._resolve_node(f"{conveyor_id}.Action_Type")
-            free_node = await sm._resolve_node(f"{conveyor_id}.free_O")
-            action_val = int(await action_node.read_value())
-            free_val = bool(await free_node.read_value())
-            return {"action_type": action_val, "free": free_val}
-    except Exception as exc:
+        return await _run_async_on_bg(_impl())
+    except asyncio.CancelledError:
+        return None
+    except Exception:
         return None
 
 
 async def read_conveyor_saved_leg(conveyor_id):
     """Returns (saved_leg1, saved_leg2) UINT values for a conveyor."""
-    url = "opc.tcp://127.0.0.1:4840"
+    async def _impl():
+        client = await _get_bg_client_async()
+        sm = PLCSymbolMap(client)
+        leg1_node = await sm._resolve_node(f"{conveyor_id}.Saved_Leg1")
+        leg2_node = await sm._resolve_node(f"{conveyor_id}.Saved_Leg2")
+        leg1 = int(await leg1_node.read_value())
+        leg2 = int(await leg2_node.read_value())
+        return leg1, leg2
+
     try:
-        async with Client(url=url) as client:
-            sm = PLCSymbolMap(client)
-            leg1_node = await sm._resolve_node(f"{conveyor_id}.Saved_Leg1")
-            leg2_node = await sm._resolve_node(f"{conveyor_id}.Saved_Leg2")
-            leg1 = int(await leg1_node.read_value())
-            leg2 = int(await leg2_node.read_value())
-            return leg1, leg2
+        return await _run_async_on_bg(_impl())
     except Exception as exc:
         print(f"[PLC] Unable to read {conveyor_id}.Saved_Leg: {exc}")
         return None

@@ -98,11 +98,11 @@ class RecipeEngine:
             return batch[0]
         return None
 
-    def next_batch(self, piece_type, ordered_qty, completed_qty, inventory):
-        """Return ALL pending operations for the current order state.
+    def next_batch(self, piece_type, ordered_qty, completed_qty, inventory, max_tables=None):
+        """Return pending operations.
 
-        Returns a list of TRANSFORM ops for all needed legs/tops,
-        or [ASSEMBLE] when all parts are ready, or None if nothing to do.
+        `max_tables` limits how many tables' worth of raw materials to
+        create this cycle (table-slot system — 10 max in pipeline).
         """
         piece_type = str(piece_type).upper()
         if piece_type not in self.FINAL_RECIPES:
@@ -112,12 +112,17 @@ class RecipeEngine:
         if remaining_final == 0:
             return None
 
+        if max_tables is not None:
+            tables_to_process = min(remaining_final, int(max_tables))
+        else:
+            tables_to_process = remaining_final
+
         profile = self.FINAL_RECIPES[piece_type]
         legs_have = int(inventory.get("legs", 0))
         tops_have = int(inventory.get("tops", 0))
 
-        legs_needed = max(0, remaining_final * 2 - legs_have)
-        tops_needed = max(0, remaining_final * 1 - tops_have)
+        legs_needed = max(0, tables_to_process * 2 - legs_have)
+        tops_needed = max(0, tables_to_process * 1 - tops_have)
 
         ops = []
 

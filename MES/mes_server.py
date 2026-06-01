@@ -7,7 +7,7 @@ def start_mes_server():
     print("[MES] Communication path: ERP database -> MES service -> PLC.")
     try:
         asyncio.run(run_mes_loop())
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         print("[MES] Shutdown requested by user.")
 
 

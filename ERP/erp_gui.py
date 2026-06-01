@@ -280,7 +280,7 @@ with tab2:
         if previous_signature != signature_value or "orders_cache" not in st.session_state:
             df_orders = query_dataframe("""
                 SELECT o.OrderID, c.Name as Client, o.DDate, o.Penalty_Per_Day,
-                       o.Status, o.Total_Cost,
+                       o.Status, o.Total_Cost, o.Estimated_Completion_Day,
                        oi.Piece_Type, oi.Quantity_Ordered, oi.Quantity_Done
                 FROM Orders o
                 JOIN Clients c ON o.Client_NIF = c.NIF

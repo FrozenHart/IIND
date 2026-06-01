@@ -33,16 +33,18 @@ def _extract_type_id(piece):
             return int(piece[0])
         except Exception:
             return 0
-    piece_dict = getattr(piece, "__dict__", None)
-    if piece_dict:
-        try:
-            return int(piece_dict.get("Type_ID", 0))
-        except Exception:
-            return 0
     body = getattr(piece, "Body", None)
     if isinstance(body, (bytes, bytearray)) and body:
         le_uint16 = int.from_bytes(body[:2], "little") if len(body) >= 2 else int(body[0])
         return le_uint16
+    piece_dict = getattr(piece, "__dict__", None)
+    if piece_dict:
+        try:
+            tid = piece_dict.get("Type_ID") or piece_dict.get("TypeId")
+            if tid is not None:
+                return int(tid)
+        except Exception:
+            return 0
     return 0
 
 
@@ -64,72 +66,63 @@ TYPE_LABELS = {
 }
 
 
-async def load_data():
-    snapshot = await read_warehouse_snapshot()
-    conveyors = {}
-    for cell in CELL_LAYOUT.values():
-        for cid in cell["conveyors"]:
-            state = await read_conveyor_state(cid)
-            conveyors[cid] = state
-    return snapshot, conveyors
+def _build_warehouse_table(warehouse_count, warehouse_values, label):
+    if warehouse_values is None:
+        st.error(f"Cannot read {label} snapshot")
+        return
+    limit = min(warehouse_count, len(warehouse_values))
+    st.caption(f"Count: **{warehouse_count}**")
+    rows = []
+    for i in range(limit):
+        tid = _extract_type_id(warehouse_values[i])
+        rows.append({"Slot": i, "Type_ID": tid, "Label": TYPE_LABELS.get(tid, f"Unknown ({tid})")})
+    if rows:
+        st.dataframe(rows, width="stretch")
+    else:
+        st.info("Empty")
 
 
-def render():
-    st.set_page_config(page_title="MES Debug Dashboard", layout="wide")
-    st.title("🔧 MES Debug Dashboard")
-
-    snapshot, conveyors = asyncio.run(load_data())
-
+@st.fragment(run_every=5)
+def _render_warehouse_fragment():
+    snap = asyncio.run(read_warehouse_snapshot())
     col1, col2 = st.columns(2)
-
     with col1:
-        st.subheader("📦 W1 (Top)")
-        if snapshot is not None:
-            w1_count, _, top_vals, _ = snapshot
-            st.caption(f"Count: **{w1_count}**")
-            table = []
-            limit = min(w1_count, len(top_vals))
-            for i in range(limit):
-                tid = _extract_type_id(top_vals[i])
-                label = TYPE_LABELS.get(tid, f"Unknown ({tid})")
-                table.append({"Slot": i, "Type_ID": tid, "Label": label})
-            if table:
-                st.dataframe(table, width="stretch")
-            else:
-                st.info("Empty")
+        st.subheader("W1 (Top)")
+        if snap is not None:
+            w1c, _, tv, _ = snap
+            _build_warehouse_table(w1c, tv, "W1")
         else:
             st.error("Cannot read W1 snapshot")
-
     with col2:
-        st.subheader("📦 W2 (Bottom)")
-        if snapshot is not None:
-            _, w2_count, _, bot_vals = snapshot
-            st.caption(f"Count: **{w2_count}**")
-            table = []
-            limit = min(w2_count, len(bot_vals))
-            for i in range(limit):
-                tid = _extract_type_id(bot_vals[i])
-                label = TYPE_LABELS.get(tid, f"Unknown ({tid})")
-                table.append({"Slot": i, "Type_ID": tid, "Label": label})
-            if table:
-                st.dataframe(table, width="stretch")
-            else:
-                st.info("Empty")
+        st.subheader("W2 (Bottom)")
+        if snap is not None:
+            _, w2c, _, bv = snap
+            _build_warehouse_table(w2c, bv, "W2")
         else:
             st.error("Cannot read W2 snapshot")
 
-    st.divider()
-    st.subheader("🏭 Cell Status")
 
-    cell_table = []
+@st.fragment(run_every=4)
+def _render_cell_status_fragment():
+    st.subheader("Cell Status")
+
+    async def load_conveyors():
+        convs = {}
+        for cell in CELL_LAYOUT.values():
+            for cid in cell["conveyors"]:
+                convs[cid] = await read_conveyor_state(cid)
+        return convs
+
+    conveyors = asyncio.run(load_conveyors())
+
+    table = []
     for cell_name, info in CELL_LAYOUT.items():
-        lane = info["lane"]
         convs = info["conveyors"]
         busy = any(
             conveyors.get(c) is not None and conveyors[c]["action_type"] != 0
             for c in convs
         )
-        status_icon = "🔴 BUSY" if busy else "🟢 FREE"
+        status_icon = "BUSY" if busy else "FREE"
         details = []
         for c in convs:
             s = conveyors.get(c)
@@ -141,17 +134,24 @@ def render():
                 act = ["pass", "transform", "swallow", "assemble"]
                 a = s["action_type"] if s["action_type"] < len(act) else "?"
                 details.append(f"{c}: {a}")
-        cell_table.append({
+        table.append({
             "Cell": cell_name,
-            "Lane": lane,
+            "Lane": info["lane"],
             "Conveyors": " ".join(convs),
             "Status": status_icon,
             "Details": ", ".join(details),
         })
 
-    st.dataframe(cell_table, width="stretch")
+    st.dataframe(table, width="stretch")
 
-    st.caption(f"Last refresh: {asyncio.get_event_loop().time():.0f}s since epoch")
+
+def render():
+    st.set_page_config(page_title="MES Debug Dashboard", layout="wide")
+    st.title("MES Debug Dashboard")
+
+    _render_warehouse_fragment()
+    st.divider()
+    _render_cell_status_fragment()
 
 
 if __name__ == "__main__":
