@@ -1,0 +1,204 @@
+2026-06-03 11:12:33 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:12:33 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:12:33 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:12:39 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:12:39 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:2026-06-03 11:14:04 | INFO    | MES | [MES] Active orders selected=2; share=5 table(s) per order, slots_free=10.
+2026-06-03 11:14:04 | INFO    | MES | [MES] Required parts: legs=2, tops=1, remaining_final=1, slots_free=10 (pipeline=0).
+2026-06-03 11:14:04 | INFO    | MES | [MES] Warehouse counts: W1=0, W2=0.
+2026-06-03 11:14:04 | INFO    | MES | [MES] Phase 1: Creating 6 raw piece(s) sequentially.
+2026-06-03 11:14:04 | INFO    | MES | [MES]   CREATE type=1 on M1a (line=I1) using tool=T3.
+2026-06-03 11:14:04 | INFO    | PLC | [PLC] Dispatch completed via mapped variables: Create_Piece_I1, piece_material_I1=1, operations=1.
+2026-06-03 11:14:04 | INFO    | MES | [MES]   Raw type=1 confirmed on L6.
+2026-06-03 11:14:05 | INFO    | MES | [MES]   CREATE type=1 on M1b (line=I1) using tool=T3.
+2026-06-03 11:14:05 | INFO    | PLC | [PLC] Dispatch completed via mapped variables: Create_Piece_I1, piece_material_I1=1, operations=1.
+2026-06-03 11:14:05 | INFO    | MES | [MES]   Raw type=1 confirmed on L6.
+2026-06-03 11:14:06 | INFO    | MES | [MES]   CREATE type=1 on M1a (line=I1) using tool=T1.
+2026-06-03 11:14:06 | INFO    | PLC | [PLC] Dispatch completed via mapped variables: Create_Piece_I1, piece_material_I1=1, operations=1.
+2026-06-03 11:14:06 | INFO    | MES | [MES]   Raw type=1 confirmed on L6.
+2026-06-03 11:14:06 | INFO    | MES | [MES]   CREATE type=2 on M3a (line=I3) using tool=T6.
+2026-06-03 11:14:06 | INFO    | PLC | [PLC] Dispatch completed via mapped variables: Create_Piece_I3, piece_material_I3=2, operations=1.
+2026-06-03 11:14:07 | INFO    | MES | [MES]   Raw type=2 confirmed on L8.
+2026-06-03 11:14:07 | INFO    | MES | [MES]   CREATE type=2 on M3b (line=I3) using tool=T6.
+2026-06-03 11:14:07 | INFO    | PLC | [PLC] Dispatch completed via mapped variables: Create_Piece_I3, piece_material_I3=2, operations=1.
+2026-06-03 11:14:08 | INFO    | MES | [MES]   Raw type=2 confirmed on L8.
+2026-06-03 11:14:08 | INFO    | MES | [MES]   CREATE type=2 on M3a (line=I3) using tool=T5.
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Dispatch completed via mapped variables: Create_Piece_I3, piece_material_I3=2, operations=1.
+2026-06-03 11:14:09 | INFO    | MES | [MES]   Raw type=2 confirmed on L8.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Phase 2: Dispatching 6 op(s) (6 transform, 0 assemble) across available cells (waiting when busy).
+2026-06-03 11:14:09 | INFO    | MES | [MES] Dispatched T3→M1a via U2. 5 remaining.
+2026-06-03 11:14:09 | INFO    |2026-06-03 11:15:05 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:15:05 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:16:05 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:16:05 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:17:04 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:17:04 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:18:05 | DEBUG   | asyncio | Using selector: SelectSelector
+2026-06-03 11:18:05 | DEBUG   | asyncio | Using selector: SelectSelector
+[MES] Cell U5 CMD M4a: action=1 target=8 tool_slot=2 process_ms=20000
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C6: action=1, tool_slot=2, target=5, time_ms=10000.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U2 CMD M1b: pass-through (action=0)
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C16: action=1, tool_slot=2, target=8, time_ms=20000.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U4 CMD M3b: pass-through (action=0)
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C11: action=1, tool_slot=2, target=5, time_ms=10000.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U3 CMD M2b: pass-through (action=0)
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C21: action=1, tool_slot=2, target=8, time_ms=20000.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U5 CMD M4b: pass-through (action=0)
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C8: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U2 CMD M1c: pass-through (action=0)
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C18: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U4 CMD M3c: pass-through (action=0)
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C13: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U3 CMD M2c: pass-through (action=0)
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C23: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U5 CMD M4c: pass-through (action=0)
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C10: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U2 PULSE Unload_Req_U2 type=1
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C20: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U4 PULSE Unload_Req_U4 type=2
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C15: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U3 PULSE Unload_Req_U3 type=1
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] Command sent to C25: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:14:09 | INFO    | MES | [MES] Cell U5 PULSE Unload_Req_U5 type=2
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=1): wrote True, read_back=True
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] pulse_unload_request(U4, material=2): wrote True, read_back=True
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] pulse_unload_request(U3, material=1): wrote True, read_back=True
+2026-06-03 11:14:09 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=2): wrote True, read_back=True
+2026-06-03 11:14:10 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=1): wrote False, read_back=False
+2026-06-03 11:14:10 | INFO    | MES | [MES] Cell U2 WAIT L2 target=5
+2026-06-03 11:14:10 | INFO    | PLC | [PLC] pulse_unload_request(U4, material=2): wrote False, read_back=False
+2026-06-03 11:14:10 | INFO    | PLC | [PLC] pulse_unload_request(U3, material=1): wrote False, read_back=False
+2026-06-03 11:14:10 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=2): wrote False, read_back=False
+2026-06-03 11:14:10 | INFO    | MES | [MES] Cell U4 WAIT L4 target=8
+2026-06-03 11:14:10 | INFO    | MES | [MES] Cell U3 WAIT L3 target=5
+2026-06-03 11:14:10 | INFO    | MES | [MES] Cell U5 WAIT L5 target=8
+2026-06-03 11:15:22 | INFO    | MES | [MES] Cell U2: est_w2 legs=1 tops=0
+2026-06-03 11:15:22 | INFO    | MES | [MES] Cell U2: operation completed.
+2026-06-03 11:15:22 | INFO    | MES | [MES] Dispatched T1→M1a via U2. 1 remaining.
+2026-06-03 11:15:23 | INFO    | MES | [MES] Cell U3: est_w2 legs=2 tops=0
+2026-06-03 11:15:23 | INFO    | MES | [MES] Cell U3: operation completed.
+2026-06-03 11:15:23 | INFO    | MES | [MES] Cell U2 CMD M1a: action=1 target=3 tool_slot=0 process_ms=30000
+2026-06-03 11:15:23 | INFO    | PLC | [PLC] Command sent to C6: action=1, tool_slot=0, target=3, time_ms=30000.
+2026-06-03 11:15:23 | INFO    | MES | [MES] Cell U2 CMD M1b: pass-through (action=0)
+2026-06-03 11:15:23 | INFO    | PLC | [PLC] Command sent to C8: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:15:23 | INFO    | MES | [MES] Cell U2 CMD M1c: pass-through (action=0)
+2026-06-03 11:15:23 | INFO    | PLC | [PLC] Command sent to C10: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:15:23 | INFO    | MES | [MES] Cell U2 PULSE Unload_Req_U2 type=1
+2026-06-03 11:15:23 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=1): wrote True, read_back=True
+2026-06-03 11:15:24 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=1): wrote False, read_back=False
+2026-06-03 11:15:24 | INFO    | MES | [MES] Cell U2 WAIT L2 target=3
+2026-06-03 11:15:33 | INFO    | MES | [MES] Cell U5: est_w2 legs=3 tops=0
+2026-06-03 11:15:33 | INFO    | MES | [MES] Cell U5: operation completed.
+2026-06-03 11:15:33 | INFO    | MES | [MES] Dispatched T5→M4a via U5. 0 remaining.
+2026-06-03 11:15:33 | INFO    | MES | [MES] Cell U4: est_w2 legs=4 tops=0
+2026-06-03 11:15:33 | INFO    | MES | [MES] Cell U4: operation completed.
+2026-06-03 11:15:33 | INFO    | MES | [MES] Cell U5 CMD M4a: action=1 target=7 tool_slot=1 process_ms=25000
+2026-06-03 11:15:33 | INFO    | PLC | [PLC] Command sent to C21: action=1, tool_slot=1, target=7, time_ms=25000.
+2026-06-03 11:15:33 | INFO    | MES | [MES] Cell U5 CMD M4b: pass-through (action=0)
+2026-06-03 11:15:33 | INFO    | PLC | [PLC] Command sent to C23: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:15:33 | INFO    | MES | [MES] Cell U5 CMD M4c: pass-through (action=0)
+2026-06-03 11:15:33 | INFO    | PLC | [PLC] Command sent to C25: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:15:33 | INFO    | MES | [MES] Cell U5 PULSE Unload_Req_U5 type=2
+2026-06-03 11:15:34 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=2): wrote True, read_back=True
+2026-06-03 11:15:34 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=2): wrote False, read_back=False
+2026-06-03 11:15:34 | INFO    | MES | [MES] Cell U5 WAIT L5 target=7
+2026-06-03 11:16:29 | INFO    | MES | [MES] Cell U2: est_w2 legs=4 tops=1
+2026-06-03 11:16:29 | INFO    | MES | [MES] Cell U2: operation completed.
+2026-06-03 11:17:04 | INFO    | MES | [MES] Cell U5: est_w2 legs=4 tops=2
+2026-06-03 11:17:04 | INFO    | MES | [MES] Cell U5: operation completed.
+2026-06-03 11:17:08 | INFO    | MES | [MES] W2[0] raw=ExtensionObject(TypeId=NodeId(Identifier='|enc|CODESYS Control Win V3 x64.Application.Piece', NamespaceIndex=4, NodeIdType=<NodeIdType.String: 3>), Body=b'\x05\x00\x00') parsed_type=5
+2026-06-03 11:17:08 | INFO    | MES | [MES] W2[1] raw=ExtensionObject(TypeId=NodeId(Identifier='|enc|CODESYS Control Win V3 x64.Application.Piece', NamespaceIndex=4, NodeIdType=<NodeIdType.String: 3>), Body=b'\x05\x00\x00') parsed_type=5
+2026-06-03 11:17:08 | INFO    | MES | [MES] W2[2] raw=ExtensionObject(TypeId=NodeId(Identifier='|enc|CODESYS Control Win V3 x64.Application.Piece', NamespaceIndex=4, NodeIdType=<NodeIdType.String: 3>), Body=b'\x08\x00\x00') parsed_type=8
+2026-06-03 11:17:08 | INFO    | MES | [MES] W2[3] raw=ExtensionObject(TypeId=NodeId(Identifier='|enc|CODESYS Control Win V3 x64.Application.Piece', NamespaceIndex=4, NodeIdType=<NodeIdType.String: 3>), Body=b'\x08\x00\x00') parsed_type=8
+2026-06-03 11:17:08 | INFO    | MES | [MES] W2[4] raw=ExtensionObject(TypeId=NodeId(Identifier='|enc|CODESYS Control Win V3 x64.Application.Piece', NamespaceIndex=4, NodeIdType=<NodeIdType.String: 3>), Body=b'\x03\x00\x00') parsed_type=3
+2026-06-03 11:17:08 | INFO    | MES | [MES] W2[5] raw=ExtensionObject(TypeId=NodeId(Identifier='|enc|CODESYS Control Win V3 x64.Application.Piece', NamespaceIndex=4, NodeIdType=<NodeIdType.String: 3>), Body=b'\x07\x00\x00') parsed_type=7
+2026-06-03 11:17:08 | INFO    | MES | [MES] Active orders selected=2; share=4 table(s) per order, slots_free=8.
+2026-06-03 11:17:08 | INFO    | MES | [MES] Required parts: legs=2, tops=1, remaining_final=1, slots_free=8 (pipeline=6).
+2026-06-03 11:17:08 | INFO    | MES | [MES] Phase 2: Dispatching 2 op(s) (0 transform, 2 assemble) across available cells (waiting when busy).
+2026-06-03 11:17:08 | INFO    | MES | [MES] Dispatched assembly SMM via U5. 1 remaining.
+2026-06-03 11:17:08 | INFO    | MES | [MES] Dispatched assembly RWW via U2. 0 remaining.
+2026-06-03 11:17:08 | INFO    | MES | [MES] Dispatching assembly for SMM: tool=T8, target=14, machine=M4c, cell=U5
+2026-06-03 11:17:08 | INFO    | MES | [MES] Assembly phase A: Transferring 3 part(s) from W2 to W1 via U1.
+2026-06-03 11:17:08 | INFO    | MES | [MES]   U1 transfer type=8
+2026-06-03 11:17:08 | INFO    | MES | [MES] Dispatching assembly for RWW: tool=T8, target=9, machine=M1c, cell=U2
+2026-06-03 11:17:08 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=8): wrote True, read_back=True
+2026-06-03 11:17:08 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=8): wrote False, read_back=False
+2026-06-03 11:17:14 | INFO    | MES | [MES]   Type=8 confirmed in W1.
+2026-06-03 11:17:14 | INFO    | MES | [MES]   U1 transfer type=8
+2026-06-03 11:17:14 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=8): wrote True, read_back=True
+2026-06-03 11:17:14 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=8): wrote False, read_back=False
+2026-06-03 11:17:20 | INFO    | MES | [MES]   Type=8 confirmed in W1.
+2026-06-03 11:17:20 | INFO    | MES | [MES]   U1 transfer type=7
+2026-06-03 11:17:20 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=7): wrote True, read_back=True
+2026-06-03 11:17:20 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=7): wrote False, read_back=False
+2026-06-03 11:17:26 | INFO    | MES | [MES]   Type=7 confirmed in W1.
+2026-06-03 11:17:26 | INFO    | MES | [MES] Assembly phase A: Transferring 3 part(s) from W2 to W1 via U1.
+2026-06-03 11:17:26 | INFO    | MES | [MES]   U1 transfer type=5
+2026-06-03 11:17:26 | INFO    | PLC | [PLC] Command sent to C21: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:26 | INFO    | PLC | [PLC] Command sent to C23: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:26 | INFO    | MES | [MES] Cell U5 Step 1/3 SWALLOW CMD M4c: action=2 target=8
+2026-06-03 11:17:26 | INFO    | PLC | [PLC] Command sent to C25: action=2, tool_slot=0, target=8, time_ms=0.
+2026-06-03 11:17:26 | INFO    | MES | [MES] Cell U5 Step 1/3 PULSE material=8
+2026-06-03 11:17:26 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=5): wrote True, read_back=True
+2026-06-03 11:17:26 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=8): wrote True, read_back=True
+2026-06-03 11:17:26 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=5): wrote False, read_back=False
+2026-06-03 11:17:26 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=8): wrote False, read_back=False
+2026-06-03 11:17:32 | INFO    | MES | [MES]   Leg type=8 stored in conveyor (step 1/3).
+2026-06-03 11:17:32 | INFO    | PLC | [PLC] Command sent to C21: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:32 | INFO    | PLC | [PLC] Command sent to C23: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:32 | INFO    | MES | [MES] Cell U5 Step 2/3 SWALLOW CMD M4c: action=2 target=8
+2026-06-03 11:17:32 | INFO    | PLC | [PLC] Command sent to C25: action=2, tool_slot=0, target=8, time_ms=0.
+2026-06-03 11:17:32 | INFO    | MES | [MES] Cell U5 Step 2/3 PULSE material=8
+2026-06-03 11:17:32 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=8): wrote True, read_back=True
+2026-06-03 11:17:32 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=8): wrote False, read_back=False
+2026-06-03 11:17:32 | INFO    | MES | [MES]   Type=5 confirmed in W1.
+2026-06-03 11:17:32 | INFO    | MES | [MES]   U1 transfer type=5
+2026-06-03 11:17:32 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=5): wrote True, read_back=True
+2026-06-03 11:17:32 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=5): wrote False, read_back=False
+2026-06-03 11:17:37 | INFO    | MES | [MES]   Leg type=8 stored in conveyor (step 2/3).
+2026-06-03 11:17:37 | INFO    | PLC | [PLC] Command sent to C21: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:37 | INFO    | PLC | [PLC] Command sent to C23: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:37 | INFO    | MES | [MES] Cell U5 Step 3/3 ASSEMBLE CMD M4c: action=3 target=14
+2026-06-03 11:17:37 | INFO    | PLC | [PLC] Command sent to C25: action=3, tool_slot=0, target=14, time_ms=10000.
+2026-06-03 11:17:37 | INFO    | MES | [MES] Cell U5 Step 3/3 PULSE material=7
+2026-06-03 11:17:37 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=7): wrote True, read_back=True
+2026-06-03 11:17:37 | INFO    | PLC | [PLC] pulse_unload_request(U5, material=7): wrote False, read_back=False
+2026-06-03 11:17:38 | INFO    | MES | [MES]   Type=5 confirmed in W1.
+2026-06-03 11:17:38 | INFO    | MES | [MES]   U1 transfer type=3
+2026-06-03 11:17:38 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=3): wrote True, read_back=True
+2026-06-03 11:17:38 | INFO    | PLC | [PLC] pulse_unload_request(U1, material=3): wrote False, read_back=False
+2026-06-03 11:17:44 | INFO    | MES | [MES]   Type=3 confirmed in W1.
+2026-06-03 11:17:44 | INFO    | PLC | [PLC] Command sent to C6: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:44 | INFO    | PLC | [PLC] Command sent to C8: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:44 | INFO    | MES | [MES] Cell U2 Step 1/3 SWALLOW CMD M1c: action=2 target=5
+2026-06-03 11:17:44 | INFO    | PLC | [PLC] Command sent to C10: action=2, tool_slot=0, target=5, time_ms=0.
+2026-06-03 11:17:44 | INFO    | MES | [MES] Cell U2 Step 1/3 PULSE material=5
+2026-06-03 11:17:44 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=5): wrote True, read_back=True
+2026-06-03 11:17:44 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=5): wrote False, read_back=False
+2026-06-03 11:17:49 | INFO    | MES | [MES]   Leg type=5 stored in conveyor (step 1/3).
+2026-06-03 11:17:49 | INFO    | PLC | [PLC] Command sent to C6: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:49 | INFO    | PLC | [PLC] Command sent to C8: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:49 | INFO    | MES | [MES] Cell U2 Step 2/3 SWALLOW CMD M1c: action=2 target=5
+2026-06-03 11:17:49 | INFO    | PLC | [PLC] Command sent to C10: action=2, tool_slot=0, target=5, time_ms=0.
+2026-06-03 11:17:49 | INFO    | MES | [MES] Cell U2 Step 2/3 PULSE material=5
+2026-06-03 11:17:49 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=5): wrote True, read_back=True
+2026-06-03 11:17:49 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=5): wrote False, read_back=False
+2026-06-03 11:17:52 | INFO    | MES | [MES]   Final piece 14 ARRIVED on L5 (step 3/3).
+2026-06-03 11:17:53 | INFO    | PLC | [PLC] pulse_unload_request(U7, material=14): wrote True, read_back=True
+2026-06-03 11:17:54 | INFO    | PLC | [PLC] pulse_unload_request(U7, material=14): wrote False, read_back=False
+2026-06-03 11:17:54 | INFO    | MES | [MES] Cell U5: operation completed.
+2026-06-03 11:17:55 | INFO    | MES | [MES]   Leg type=5 stored in conveyor (step 2/3).
+2026-06-03 11:17:55 | INFO    | PLC | [PLC] Command sent to C6: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:55 | INFO    | PLC | [PLC] Command sent to C8: action=0, tool_slot=0, target=0, time_ms=0.
+2026-06-03 11:17:55 | INFO    | MES | [MES] Cell U2 Step 3/3 ASSEMBLE CMD M1c: action=3 target=9
+2026-06-03 11:17:55 | INFO    | PLC | [PLC] Command sent to C10: action=3, tool_slot=0, target=9, time_ms=10000.
+2026-06-03 11:17:55 | INFO    | MES | [MES] Cell U2 Step 3/3 PULSE material=3
+2026-06-03 11:17:55 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=3): wrote True, read_back=True
+2026-06-03 11:17:55 | INFO    | PLC | [PLC] pulse_unload_request(U2, material=3): wrote False, read_back=False
+2026-06-03 11:18:10 | INFO    | MES | [MES]   Final piece 9 ARRIVED on L2 (step 3/3).
+2026-06-03 11:18:11 | INFO    | PLC | [PLC] pulse_unload_request(U8, material=9): wrote True, read_back=True
+2026-06-03 11:18:11 | INFO    | PLC | [PLC] pulse_unload_request(U8, material=9): wrote False, read_back=False
+2026-06-03 11:18:11 | INFO    | MES | [MES] Cell U2: operation completed.
+2026-06-03 11:18:14 | INFO    | MES | [MES] No open order items.
+2026-06-03 11:18:24 | INFO    | MES | [MES] OPC-UA client closed.
+2026-06-03 11:18:24 | INFO    | MES | Shutdown requested by user.

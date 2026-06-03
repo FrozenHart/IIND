@@ -2,6 +2,10 @@ import asyncio
 import signal
 import psycopg2
 
+from mes_logger import setup_logger
+
+logger = setup_logger("MES")
+
 from mes_recipe_engine import RecipeEngine
 from plc_client import close_client
 from mes_scheduler import MACHINE_TOOLS, TOOL_TO_SLOT, ASSEMBLY_MACHINES, estimate_order_completion
@@ -17,6 +21,7 @@ from plc_client import (
     read_warehouse_snapshot,
     read_conveyor_state,
     read_conveyor_saved_leg,
+    read_conveyor_recv,
 )
 
 DB_HOST = "localhost"
@@ -73,6 +78,14 @@ UNLOAD_KEY_TO_MACHINES = {
     "U5": ["M4a", "M4b", "M4c"],
 }
 
+INPUT_TO_LOADING_CONV = {
+    "I1": "L6", "I2": "L7", "I3": "L8", "I4": "L9", "I5": "L10",
+}
+
+UNLOAD_KEY_TO_LOADING_CONV = {
+    "U2": "L2", "U3": "L3", "U4": "L4", "U5": "L5",
+}
+
 
 class MESService:
     def __init__(self):
@@ -89,9 +102,9 @@ class MESService:
         self._est_w1 = {"raw_wood": 0, "raw_metal": 0, "legs": 0, "tops": 0}
         self._est_w2 = {"legs": 0, "tops": 0, "final": 0}
         self._tool_machine_index = {}
-        self._order_cursor = 0
         self._next_output_index = 0
         self._cell_busy = {"U2": False, "U3": False, "U4": False, "U5": False}
+        self._u1_lock = asyncio.Lock()
 
     def _conn(self):
         return psycopg2.connect(
@@ -168,8 +181,8 @@ class MESService:
             return True
         except Exception as exc:
             if not self._schema_error_logged:
-                print(f"[MES] Database schema check failed: {exc}")
-                print("[MES] Run: psql -p 5000 -U postgres -d erp_db -f Database/shared_schema.sql")
+                logger.info(f"[MES] Database schema check failed: {exc}")
+                logger.info("[MES] Run: psql -p 5000 -U postgres -d erp_db -f Database/shared_schema.sql")
                 self._schema_error_logged = True
             return False
 
@@ -470,23 +483,6 @@ class MESService:
     def _machines_for_tool(tool):
         return [m for m, tools in MACHINE_TOOLS.items() if tool in tools]
 
-    def _pick_order_item(self, open_items):
-        if not open_items:
-            return None
-        ordered = []
-        seen = set()
-        for item in open_items:
-            order_id = item.get("order_id")
-            if order_id in seen:
-                continue
-            seen.add(order_id)
-            ordered.append(item)
-        if not ordered:
-            return open_items[0]
-        selected = ordered[self._order_cursor % len(ordered)]
-        self._order_cursor = (self._order_cursor + 1) % len(ordered)
-        return selected
-
     async def process_cycle(self):
         if not self._ensure_schema_ready():
             return
@@ -496,9 +492,9 @@ class MESService:
             configured = await write_tool_configuration(tool_map, tool_times)
             if configured:
                 self._tools_configured = True
-                print("[MES] Tool configuration pushed to PLC.")
+                logger.info("[MES] Tool configuration pushed to PLC.")
             else:
-                print("[MES] Failed to push tool configuration to PLC.")
+                logger.info("[MES] Failed to push tool configuration to PLC.")
 
         current_day = self._get_current_day()
         open_items = self.get_open_order_items(current_day)
@@ -506,12 +502,12 @@ class MESService:
             if not self._no_open_items_logged:
                 future_items = self.count_future_open_items(current_day)
                 if future_items > 0:
-                    print(
+                    logger.info(
                         f"[MES] No due order items for Day {current_day}. "
                         f"Future queued items: {future_items}."
                     )
                 else:
-                    print("[MES] No open order items.")
+                    logger.info("[MES] No open order items.")
                 self._no_open_items_logged = True
             self.sync_order_status()
             self._update_estimated_completion_days()
@@ -569,8 +565,7 @@ class MESService:
                 _, after_w2 = after
                 if after_w2 < before_w2:
                     return True
-            # Don’t block forever; if PLC/W2 counters lag, proceed.
-            return True
+            return False
 
         async def _wait_for_saved_leg_increment(conveyor_id, expected_type, timeout_s=10.0, poll_s=0.2, max_failures=10):
             """Wait until the count of Saved_Leg slots matching expected_type increases."""
@@ -594,25 +589,62 @@ class MESService:
                     return True
             return False
 
-        async def _wait_for_w2_type(target_type, timeout_s=300.0, poll_s=0.5, max_failures=10):
+        async def _wait_for_loading_piece(loading_conv, expected_type, timeout_s=300.0, poll_s=0.2, max_failures=10):
+            """Wait for recv_i rising edge (False→True) on loading conveyor."""
+            before = await read_conveyor_recv(loading_conv)
+            if before is None:
+                before = False
             start = asyncio.get_event_loop().time()
+
+            # If recv_i is already True, wait for it to drop to False first
+            if before:
+                failures = 0
+                while (asyncio.get_event_loop().time() - start) < timeout_s:
+                    await asyncio.sleep(poll_s)
+                    recv = await read_conveyor_recv(loading_conv)
+                    if recv is None:
+                        failures += 1
+                        if failures >= max_failures:
+                            return False
+                        continue
+                    failures = 0
+                    if not recv:
+                        before = False
+                        break
+                if before:
+                    return False
+
+            # Wait for rising edge False→True
             failures = 0
             while (asyncio.get_event_loop().time() - start) < timeout_s:
                 await asyncio.sleep(poll_s)
-                snap = await read_warehouse_snapshot()
-                if snap is None:
+                recv = await read_conveyor_recv(loading_conv)
+                if recv is None:
                     failures += 1
                     if failures >= max_failures:
                         return False
                     continue
                 failures = 0
-                _, w2_count, _, bottom_values = snap
-                limit = min(w2_count, len(bottom_values))
-                for idx in range(limit):
-                    raw = bottom_values[idx]
-                    type_id = _extract_type_id(raw)
-                    if type_id == target_type:
-                        return True
+                if recv and not before:
+                    return True
+                before = recv
+            return False
+
+        async def _wait_for_input_free(loading_conv, timeout_s=120.0, poll_s=0.2, max_failures=10):
+            """Wait for loading conveyor recv_i to be False (line free)."""
+            start = asyncio.get_event_loop().time()
+            failures = 0
+            while (asyncio.get_event_loop().time() - start) < timeout_s:
+                await asyncio.sleep(poll_s)
+                recv = await read_conveyor_recv(loading_conv)
+                if recv is None:
+                    failures += 1
+                    if failures >= max_failures:
+                        return False
+                    continue
+                failures = 0
+                if not recv:
+                    return True
             return False
 
         def _extract_type_id(piece):
@@ -777,23 +809,15 @@ class MESService:
             for idx in range(limit):
                 raw = values[idx]
                 type_id = _extract_type_id(raw)
-                print(f"[MES] {label}[{idx}] raw={raw!r} parsed_type={type_id}")
+                logger.info(f"[MES] {label}[{idx}] raw={raw!r} parsed_type={type_id}")
 
         snapshot = await read_warehouse_snapshot()
-        assembly_item = _choose_assembly_item(open_items, snapshot)
-        first_item = assembly_item or self._pick_order_item(open_items)
-        distinct_order_ids = []
-        for item in open_items:
-            order_id = item.get("order_id")
-            if order_id not in distinct_order_ids:
-                distinct_order_ids.append(order_id)
         w1_count = w2_count = 0
         if snapshot is not None:
             w1_count, w2_count, top_values, bottom_values = snapshot
             _log_snapshot(top_values, w1_count, "W1")
             _log_snapshot(bottom_values, w2_count, "W2")
 
-            # Reconcile estimated inventories against actual PLC warehouse state
             raw_wood = sum(1 for idx in range(min(w1_count, len(top_values))) if _extract_type_id(top_values[idx]) == 1)
             raw_metal = sum(1 for idx in range(min(w1_count, len(top_values))) if _extract_type_id(top_values[idx]) == 2)
             w1_legs = sum(1 for idx in range(min(w1_count, len(top_values))) if _extract_type_id(top_values[idx]) in (5, 8))
@@ -811,7 +835,7 @@ class MESService:
                 raw_metal != self._est_w1.get("raw_metal", 0) or
                 w1_legs != actual_w1_legs or w1_tops != actual_w1_tops or
                 w2_legs != actual_w2_legs or w2_tops != actual_w2_tops):
-                print(
+                logger.info(
                     "[MES] Reconciling inventory: "
                     f"W1(raw_wood={raw_wood}, raw_metal={raw_metal}, "
                     f"legs={w1_legs}, tops={w1_tops}) "
@@ -827,47 +851,74 @@ class MESService:
 
         inventory = _est_inventory()
 
-        # Compute free table slots (10 max in pipeline, each table = 3 pieces)
         pipeline = w1_count + w2_legs + w2_tops
         slots_used = (pipeline + 2) // 3
         slots_free = max(0, 10 - slots_used)
 
-        remaining_final = max(
-            0,
-            int(first_item["quantity_ordered"]) - int(first_item["quantity_completed"]),
-        )
+        # Select orders up to slots_free capacity
+        assembly_item = _choose_assembly_item(open_items, snapshot)
+        selected_orders = []
+        if assembly_item:
+            selected_orders.append(assembly_item)
+        for item in open_items:
+            oid = item.get("order_id")
+            if any(o["order_id"] == oid for o in selected_orders):
+                continue
+            if len(selected_orders) >= max(1, slots_free):
+                break
+            selected_orders.append(item)
+
+        if not selected_orders:
+            self.sync_order_status()
+            self._update_estimated_completion_days()
+            return
+
+        order_share = max(1, slots_free // max(1, len(selected_orders)))
+        if len(selected_orders) > 1:
+            logger.info(
+                f"[MES] Active orders selected={len(selected_orders)}; "
+                f"share={order_share} table(s) per order, "
+                f"slots_free={slots_free}."
+            )
+
+        all_transform_ops = []
+        all_assemble_ops = []
+        first_item = selected_orders[0]
+        for sel in selected_orders:
+            ops = self.recipe_engine.next_batch(
+                piece_type=sel["piece_type"],
+                ordered_qty=sel["quantity_ordered"],
+                completed_qty=sel["quantity_completed"],
+                inventory=inventory,
+                max_tables=order_share,
+            )
+            if ops is None:
+                continue
+            for op in ops:
+                op._order_ref = sel
+            all_transform_ops.extend(o for o in ops if o.action == "TRANSFORM")
+            all_assemble_ops.extend(o for o in ops if o.action == "ASSEMBLE")
+
+        if not all_transform_ops and not all_assemble_ops:
+            self.sync_order_status()
+            self._update_estimated_completion_days()
+            return
+
+        transform_ops = all_transform_ops
+        assemble_ops = all_assemble_ops
+
+        remaining_final = max(0, int(first_item["quantity_ordered"]) - int(first_item["quantity_completed"]))
         required_legs = remaining_final * 2
         required_tops = remaining_final
-        print(
+        logger.info(
             "[MES] Required parts: "
             f"legs={required_legs}, tops={required_tops}, "
             f"remaining_final={remaining_final}, "
             f"slots_free={slots_free} (pipeline={pipeline})."
         )
         if self._last_w1_count != w1_count:
-            print(f"[MES] Warehouse counts: W1={w1_count}, W2={w2_count}.")
+            logger.info(f"[MES] Warehouse counts: W1={w1_count}, W2={w2_count}.")
             self._last_w1_count = w1_count
-        order_share = max(1, slots_free // max(1, len(distinct_order_ids)))
-        if len(distinct_order_ids) > 1:
-            print(
-                f"[MES] Active orders={len(distinct_order_ids)}; "
-                f"limiting this order to {order_share} table slot(s)."
-            )
-        ops = self.recipe_engine.next_batch(
-            piece_type=first_item["piece_type"],
-            ordered_qty=first_item["quantity_ordered"],
-            completed_qty=first_item["quantity_completed"],
-            inventory=inventory,
-            max_tables=order_share,
-        )
-
-        if ops is None:
-            self.sync_order_status()
-            self._update_estimated_completion_days()
-            return
-
-        transform_ops = [o for o in ops if o.action == "TRANSFORM"]
-        assemble_ops = [o for o in ops if o.action == "ASSEMBLE"]
 
         if transform_ops:
             counts = await read_warehouse_counts()
@@ -875,7 +926,7 @@ class MESService:
                 w1_count, w2_count = counts
                 total_wip = w1_count + w2_count
                 if total_wip >= MAX_WAREHOUSE_WIP:
-                    print(
+                    logger.info(
                         "[MES] Warehouse full; skipping batch. "
                         f"W1={w1_count}, W2={w2_count}, limit={MAX_WAREHOUSE_WIP}."
                     )
@@ -886,25 +937,33 @@ class MESService:
             for op in transform_ops:
                 machines = self._machines_for_tool(op.tool)
                 if not machines:
-                    print(f"[MES]   No machines support tool {op.tool}; skipping.")
+                    logger.info(f"[MES]   No machines support tool {op.tool}; skipping.")
                     continue
-                order_key = f"{first_item['order_id']}:{op.tool}"
+                order_key = f"{op._order_ref['order_id']}:{op.tool}"
                 start = self._tool_machine_index.get(order_key, 0)
                 machine = machines[start % len(machines)]
                 self._tool_machine_index[order_key] = (start + 1) % len(machines)
                 phase1_pairs.append((op, machine))
 
             if not phase1_pairs:
-                print("[MES] No transform ops with available machines.")
+                logger.info("[MES] No transform ops with available machines.")
                 return
 
-            print(
+            logger.info(
                 f"[MES] Phase 1: Creating {len(phase1_pairs)} raw piece(s) sequentially."
             )
             for op, machine in phase1_pairs:
                 raw_type_id = int(op.material_id)
                 machine_line = MACHINE_TO_INPUT.get(machine, "?")
-                print(
+                loading_conv = INPUT_TO_LOADING_CONV.get(machine_line)
+                if not loading_conv:
+                    logger.info(f"[MES]   No loading conveyor for {machine_line}.")
+                    return
+                free = await _wait_for_input_free(loading_conv, timeout_s=120.0)
+                if not free:
+                    logger.info(f"[MES]   Input {machine_line} ({loading_conv}) still busy; aborting.")
+                    return
+                logger.info(
                     f"[MES]   CREATE type={raw_type_id} on {machine} "
                     f"(line={machine_line}) using tool={op.tool}."
                 )
@@ -912,20 +971,28 @@ class MESService:
                     machine, op.tool, "CREATE", operations_count=1,
                 )
                 if not create_ok:
-                    print(f"[MES]   CREATE failed for {machine}.")
+                    logger.info(f"[MES]   CREATE failed for {machine}.")
                     return
-                arrived = await _wait_for_w1_type_increment(raw_type_id)
+                arrived = await _wait_for_loading_piece(loading_conv, raw_type_id, timeout_s=15.0)
                 if not arrived:
-                    print(
-                        f"[MES]   Raw type={raw_type_id} count did not increase "
-                        f"after create on {machine}."
+                    logger.info(
+                        f"[MES]   Raw type={raw_type_id} not detected on "
+                        f"{loading_conv} after create on {machine}."
                     )
                     return
-                print(f"[MES]   Raw type={raw_type_id} confirmed in W1.")
+                logger.info(f"[MES]   Raw type={raw_type_id} confirmed on {loading_conv}.")
 
-            # ---- Phase 2: Dispatch ops to free cells in parallel ----
-            print(
-                f"[MES] Phase 2: Dispatching {len(transform_ops)} op(s) "
+        # ---- Phase 2: Dispatch all ops to free cells in parallel ----
+        all_ops = []
+        for op in transform_ops:
+            all_ops.append((op, "TRANSFORM", op._order_ref))
+        for op in assemble_ops:
+            all_ops.append((op, "ASSEMBLE", op._order_ref))
+
+        if all_ops:
+            logger.info(
+                f"[MES] Phase 2: Dispatching {len(all_ops)} op(s) "
+                f"({len(transform_ops)} transform, {len(assemble_ops)} assemble) "
                 f"across available cells (waiting when busy)."
             )
 
@@ -938,7 +1005,13 @@ class MESService:
                     raw_type_id = int(op.material_id)
                     all_cell_machines = UNLOAD_KEY_TO_MACHINES[uk]
 
-                    # [1/3] CMD to all machines in cell
+                    cell_loading_conv = UNLOAD_KEY_TO_LOADING_CONV.get(uk)
+                    if cell_loading_conv:
+                        _free = await _wait_for_input_free(cell_loading_conv, timeout_s=120.0)
+                        if not _free:
+                            logger.info(f"[MES] Cell {uk}: {cell_loading_conv} still busy; skipping.")
+                            return False
+
                     for cm in all_cell_machines:
                         if cm == machine:
                             tool_slot = TOOL_TO_SLOT.get(cm, {}).get(op.tool)
@@ -949,7 +1022,7 @@ class MESService:
                                 "needed_tool_slot": int(tool_slot) if tool_slot is not None else 0,
                                 "req_top_id": 0, "req_leg_id": 0, "req_join_tool": 0,
                             }
-                            print(
+                            logger.info(
                                 f"[MES] Cell {uk} CMD {cm}: "
                                 f"action={cmd['action_type']} target={cmd['target_id']} "
                                 f"tool_slot={cmd['needed_tool_slot']} "
@@ -957,7 +1030,7 @@ class MESService:
                             )
                             ok = await send_machine_command(cm, cmd)
                             if not ok:
-                                print(f"[MES] Cell {uk}: primary {cm} CMD failed.")
+                                logger.info(f"[MES] Cell {uk}: primary {cm} CMD failed.")
                                 return False
                         else:
                             cmd = {
@@ -965,29 +1038,30 @@ class MESService:
                                 "needed_tool_slot": 0, "req_top_id": 0,
                                 "req_leg_id": 0, "req_join_tool": 0,
                             }
-                            print(f"[MES] Cell {uk} CMD {cm}: pass-through (action=0)")
+                            logger.info(f"[MES] Cell {uk} CMD {cm}: pass-through (action=0)")
                             await send_machine_command(cm, cmd)
 
-                    # [2/3] Unload
-                    print(f"[MES] Cell {uk} PULSE Unload_Req_{uk} type={raw_type_id}")
+                    logger.info(f"[MES] Cell {uk} PULSE Unload_Req_{uk} type={raw_type_id}")
                     unload_ok = await pulse_unload_request(uk, raw_type_id)
                     if not unload_ok:
-                        print(f"[MES] Cell {uk}: unload pulse FAILED.")
+                        logger.info(f"[MES] Cell {uk}: unload pulse FAILED.")
                         return False
 
-                    # [3/3] Wait for processed piece in W2
-                    print(f"[MES] Cell {uk} WAIT W2 target={op.target_id}")
-                    arrived = await _wait_for_w2_type(int(op.target_id))
+                    loading_conv = UNLOAD_KEY_TO_LOADING_CONV.get(uk)
+                    if not loading_conv:
+                        logger.info(f"[MES]   No loading conveyor for {uk}.")
+                        return False
+                    logger.info(f"[MES] Cell {uk} WAIT {loading_conv} target={op.target_id}")
+                    arrived = await _wait_for_loading_piece(loading_conv, int(op.target_id))
                     if not arrived:
-                        print(f"[MES] Cell {uk}: target={op.target_id} NOT seen in W2.")
+                        logger.info(f"[MES] Cell {uk}: target={op.target_id} NOT seen on {loading_conv}.")
                         return False
 
-                    # Track inventory
                     if op.target_id in (5, 8):
                         self._est_w2["legs"] += 1
                     elif op.target_id in (3, 4, 6, 7):
                         self._est_w2["tops"] += 1
-                    print(
+                    logger.info(
                         f"[MES] Cell {uk}: est_w2 legs={self._est_w2['legs']} "
                         f"tops={self._est_w2['tops']}"
                     )
@@ -995,43 +1069,227 @@ class MESService:
                 finally:
                     self._cell_busy[uk] = False
 
-            pending_ops = list(transform_ops)
-            active = {}  # uk -> (task, op, machine)
+            async def _run_assemble_op(op, order_item, machine):
+                """Run full assembly in a free cell. Returns True on success, False otherwise."""
+                snap = await read_warehouse_snapshot()
+                if snap is None:
+                    return False
+                counts = _piece_inventory(snap)
+                leg_id = int(op.req_leg_id)
+                top_id = int(op.req_top_id)
+                if counts["legs"].get(leg_id, 0) < 2 or counts["tops"].get(top_id, 0) < 1:
+                    return False
+
+                uk = ASSEMBLY_UNLOAD_MAP.get(machine)
+                if not uk:
+                    return False
+
+                logger.info(
+                    f"[MES] Dispatching assembly for {op.piece_type}: "
+                    f"tool={op.tool}, target={op.target_id}, machine={machine}, cell={uk}"
+                )
+
+                unload_material_ids = []
+                if int(op.req_leg_id) > 0:
+                    unload_material_ids.extend([int(op.req_leg_id), int(op.req_leg_id)])
+                if int(op.req_top_id) > 0:
+                    unload_material_ids.append(int(op.req_top_id))
+                if not unload_material_ids:
+                    return False
+
+                # Phase A: Transfer from W2→W1 via U1 (serialized across assemblies)
+                async with self._u1_lock:
+                    logger.info(
+                        f"[MES] Assembly phase A: Transferring {len(unload_material_ids)} "
+                        f"part(s) from W2 to W1 via U1."
+                    )
+                    for material_id in unload_material_ids:
+                        logger.info(f"[MES]   U1 transfer type={material_id}")
+                        u1_ok = await pulse_unload_request("U1", material_id)
+                        if not u1_ok:
+                            logger.info(f"[MES]   U1 pulse FAILED for type={material_id}.")
+                            return False
+                        arrived = await _wait_for_w1_type_increment(material_id)
+                        if not arrived:
+                            logger.info(f"[MES]   Type={material_id} count did not increase in W1 after U1 transfer.")
+                            return False
+                        if material_id in (5, 8):
+                            self._est_w2["legs"] = max(0, self._est_w2["legs"] - 1)
+                            self._est_w1["legs"] += 1
+                        elif material_id in (3, 4, 6, 7):
+                            self._est_w2["tops"] = max(0, self._est_w2["tops"] - 1)
+                            self._est_w1["tops"] += 1
+                        logger.info(f"[MES]   Type={material_id} confirmed in W1.")
+
+                # Phase B: 3 feeder steps on acquired cell
+                self._cell_busy[uk] = True
+                try:
+                    all_cell_machines = UNLOAD_KEY_TO_MACHINES[uk]
+                    conveyor_id = MACHINE_TO_CONVEYOR[machine]
+                    tool_slot = TOOL_TO_SLOT.get(machine, {}).get(op.tool)
+
+                    feeder_steps = [
+                        {"action": "SWALLOW", "material_id": leg_id, "target_id": leg_id},
+                        {"action": "SWALLOW", "material_id": leg_id, "target_id": leg_id},
+                        {"action": "ASSEMBLE", "material_id": top_id, "target_id": int(op.target_id)},
+                    ]
+
+                    for step_idx, step in enumerate(feeder_steps):
+                        material_id = step["material_id"]
+
+                        for cm in all_cell_machines:
+                            if cm == machine:
+                                if step["action"] == "SWALLOW":
+                                    cmd = {
+                                        "action_type": 2, "process_ms": 0,
+                                        "target_id": int(step["target_id"]),
+                                        "needed_tool_slot": 0,
+                                        "req_top_id": int(op.req_top_id),
+                                        "req_leg_id": int(op.req_leg_id),
+                                        "req_join_tool": int(op.req_join_tool),
+                                    }
+                                else:
+                                    cmd = {
+                                        "action_type": 3,
+                                        "process_ms": int(op.duration_s * 1000),
+                                        "target_id": int(step["target_id"]),
+                                        "needed_tool_slot": int(tool_slot) if tool_slot is not None else 0,
+                                        "req_top_id": int(op.req_top_id),
+                                        "req_leg_id": int(op.req_leg_id),
+                                        "req_join_tool": int(op.req_join_tool),
+                                    }
+                                logger.info(
+                                    f"[MES] Cell {uk} Step {step_idx+1}/3 {step['action']} "
+                                    f"CMD {cm}: action={cmd['action_type']} target={cmd['target_id']}"
+                                )
+                                ok = await send_machine_command(cm, cmd)
+                                if not ok:
+                                    logger.info(f"[MES]   {step['action']} CMD failed.")
+                                    return False
+                            else:
+                                pass_cmd = {
+                                    "action_type": 0, "process_ms": 0, "target_id": 0,
+                                    "needed_tool_slot": 0, "req_top_id": 0,
+                                    "req_leg_id": 0, "req_join_tool": 0,
+                                }
+                                await send_machine_command(cm, pass_cmd)
+
+                        logger.info(f"[MES] Cell {uk} Step {step_idx+1}/3 PULSE material={material_id}")
+                        unload_ok = await _pulse_unload_with_wait(uk, material_id)
+                        if not unload_ok:
+                            logger.info(f"[MES]   {step['action']} unload FAILED.")
+                            return False
+
+                        if material_id in (5, 8):
+                            self._est_w1["legs"] = max(0, self._est_w1["legs"] - 1)
+                        elif material_id in (3, 4, 6, 7):
+                            self._est_w1["tops"] = max(0, self._est_w1["tops"] - 1)
+
+                        if step["action"] == "SWALLOW":
+                            arrived = await _wait_for_saved_leg_increment(conveyor_id, material_id)
+                            if not arrived:
+                                logger.info(f"[MES]   Leg type={material_id} NOT stored in conveyor.")
+                                return False
+                            logger.info(f"[MES]   Leg type={material_id} stored in conveyor (step {step_idx+1}/3).")
+                        else:
+                            loading_conv = UNLOAD_KEY_TO_LOADING_CONV.get(uk)
+                            if not loading_conv:
+                                logger.info(f"[MES]   No loading conveyor for {uk}.")
+                                return False
+                            arrived = await _wait_for_loading_piece(loading_conv, int(op.target_id))
+                            if not arrived:
+                                logger.info(f"[MES]   Final piece {op.target_id} NOT seen on {loading_conv} after assembly.")
+                                return False
+                            logger.info(f"[MES]   Final piece {op.target_id} ARRIVED on {loading_conv} (step 3/3).")
+
+                            # Wait for piece to leave Lx and enter W2 before shipping
+                            w2_before = (await read_warehouse_counts())[1]
+                            if w2_before is None:
+                                w2_before = 0
+                            w2_after = await _wait_for_w2_increment(w2_before, timeout_s=30.0)
+                            if w2_after <= w2_before:
+                                logger.info(f"[MES] Piece {op.target_id} did not enter W2 after assembly on {uk}.")
+                                return False
+                finally:
+                    self._cell_busy[uk] = False
+
+                # Phase C: Ship
+                output_lanes = ["U7", "U8", "U9", "U10"]
+                lane = output_lanes[self._next_output_index % len(output_lanes)]
+                self._next_output_index += 1
+                ship_ok = await _pulse_ship_final_with_confirm(lane, int(op.target_id))
+                if not ship_ok:
+                    logger.info(f"[MES] Failed to ship final piece via {lane}.")
+                    return False
+                self._est_w2["final"] += 1
+
+                self.update_item_completion(order_item["id"], produced_count=1)
+                self._apply_inventory_delta(order_item["piece_type"], op)
+                return True
+
+            pending_ops = list(all_ops)
+            active = {}
+            completed_transforms = []
+            completed_assemblies = []
 
             while pending_ops or active:
-                # Assign pending ops to free cells (any machine supporting the tool)
-                for op in list(pending_ops):
-                    machines = self._machines_for_tool(op.tool)
+                for item in list(pending_ops):
+                    op, op_type, order_item = item
                     assigned = False
-                    for machine in machines:
-                        uk = MACHINE_UNLOAD_MAP.get(machine)
-                        if uk and uk not in active and not self._cell_busy.get(uk, False):
-                            task = asyncio.create_task(_run_one_op(op, machine))
-                            active[uk] = (task, op, machine)
-                            pending_ops.remove(op)
-                            assigned = True
-                            print(
-                                f"[MES] Dispatched {op.tool}→{machine} via {uk}. "
-                                f"{len(pending_ops)} remaining."
-                            )
-                            break
+
+                    if op_type == "TRANSFORM":
+                        machines = self._machines_for_tool(op.tool)
+                        for machine in machines:
+                            uk = MACHINE_UNLOAD_MAP.get(machine)
+                            if uk and uk not in active and not self._cell_busy.get(uk, False):
+                                task = asyncio.create_task(_run_one_op(op, machine))
+                                active[uk] = (task, item, machine)
+                                pending_ops.remove(item)
+                                assigned = True
+                                logger.info(
+                                    f"[MES] Dispatched {op.tool}→{machine} via {uk}. "
+                                    f"{len(pending_ops)} remaining."
+                                )
+                                break
+
+                    elif op_type == "ASSEMBLE":
+                        snap = await read_warehouse_snapshot()
+                        if snap:
+                            counts = _piece_inventory(snap)
+                            leg_id = int(op.req_leg_id)
+                            top_id = int(op.req_top_id)
+                            if counts["legs"].get(leg_id, 0) < 2 or counts["tops"].get(top_id, 0) < 1:
+                                continue
+                        for am in ASSEMBLY_MACHINES:
+                            if op.tool not in MACHINE_TOOLS.get(am, []):
+                                continue
+                            uk = ASSEMBLY_UNLOAD_MAP.get(am)
+                            if uk and uk not in active and not self._cell_busy.get(uk, False):
+                                task = asyncio.create_task(_run_assemble_op(op, order_item, am))
+                                active[uk] = (task, item, am)
+                                pending_ops.remove(item)
+                                assigned = True
+                                logger.info(
+                                    f"[MES] Dispatched assembly {op.piece_type} via {uk}. "
+                                    f"{len(pending_ops)} remaining."
+                                )
+                                break
 
                 if not active:
                     if pending_ops:
-                        print(
+                        logger.info(
                             f"[MES] All cells busy, {len(pending_ops)} op(s) waiting..."
                         )
                         await asyncio.sleep(0.5)
                     continue
 
-                # Wait for at least one task to complete
                 task_list = [data[0] for data in active.values()]
                 done, _ = await asyncio.wait(
                     task_list, return_when=asyncio.FIRST_COMPLETED
                 )
 
                 for done_task in done:
-                    for uk, (task, op, machine) in list(active.items()):
+                    for uk, (task, item, machine) in list(active.items()):
                         if task is done_task:
                             try:
                                 result = done_task.result()
@@ -1039,247 +1297,38 @@ class MESService:
                                 raise
                             except Exception as exc:
                                 result = exc
+                            op, op_type, order_item = item
+
                             if isinstance(result, Exception):
-                                print(
-                                    f"[MES] Cell {uk}: exception ({result}). "
-                                    "Will retry."
-                                )
-                                pending_ops.append(op)
+                                logger.info(f"[MES] Cell {uk}: exception ({result}).")
+                                if op_type == "TRANSFORM":
+                                    pending_ops.append(item)
                             elif not result:
-                                print(
-                                    f"[MES] Cell {uk}: operation failed. "
-                                    "Will retry."
-                                )
-                                pending_ops.append(op)
+                                logger.info(f"[MES] Cell {uk}: operation failed.")
+                                if op_type == "TRANSFORM":
+                                    pending_ops.append(item)
                             else:
-                                print(f"[MES] Cell {uk}: operation completed.")
+                                logger.info(f"[MES] Cell {uk}: operation completed.")
+                                if op_type == "TRANSFORM":
+                                    completed_transforms.append((op, machine))
+                                else:
+                                    completed_assemblies.append(item)
                             del active[uk]
                             break
 
-            # After all transforms, check assembly readiness
-            ready_item = _choose_assembly_item(open_items, snapshot)
-            if ready_item:
-                ready_type = ready_item.get("piece_type")
-                ready_due = ready_item.get("ddate")
-                ready_penalty = ready_item.get("penalty")
-                print(
-                    "[MES] Parts ready for at least one table; "
-                    f"next assembly candidate={ready_type} "
-                    f"(due={ready_due}, penalty={ready_penalty})."
-                )
-            return
+            # Record stats
+            for op, machine in completed_transforms:
+                self._record_machine_tool_stats(machine, op.tool, 1, op.piece_type)
+            for item in completed_assemblies:
+                op, _, _ = item
+                machine = self._find_machine_for_tool(op.tool)
+                if machine:
+                    self._record_machine_tool_stats(machine, op.tool, 1, op.piece_type)
 
-        if assemble_ops:
-            chosen_item = _choose_assembly_item(open_items, snapshot)
-            if not chosen_item:
-                print("[MES] No table has complete parts in W2 yet; deferring assembly.")
-                return
+            unload_snapshot = await read_unloading_snapshot()
+            if unload_snapshot:
+                self._record_unloading_stats(unload_snapshot)
 
-            ops = self.recipe_engine.next_batch(
-                piece_type=chosen_item["piece_type"],
-                ordered_qty=chosen_item["quantity_ordered"],
-                completed_qty=chosen_item["quantity_completed"],
-                inventory=_est_inventory(),
-                max_tables=1,
-            )
-            if not ops:
-                return
-            assemble_ops = [o for o in ops if o.action == "ASSEMBLE"]
-            if not assemble_ops:
-                print("[MES] Assembly requested but ops missing; deferring.")
-                return
-
-            op = assemble_ops[0]
-            machine = self._find_machine_for_tool(op.tool)
-            if not machine:
-                print(f"[MES] No machine found for tool {op.tool}")
-                return
-            print(
-                f"[MES] Dispatching assembly for {op.piece_type}: "
-                f"tool={op.tool}, target={op.target_id}, machine={machine}, "
-                f"production_day={chosen_item['production_day']}, current_day={current_day}"
-            )
-            if machine not in ASSEMBLY_MACHINES:
-                print(f"[MES] Machine {machine} is not configured for assembly.")
-                return
-
-            unload_key = ASSEMBLY_UNLOAD_MAP.get(machine)
-            if not unload_key:
-                print(f"[MES] No unload conveyor mapping for {machine}.")
-                return
-
-            if self._cell_busy.get(unload_key, False):
-                print(
-                    f"[MES] Cell {unload_key} busy; deferring assembly for {machine}."
-                )
-                return
-
-            # Build the list of materials needed for this assembly
-            unload_material_ids = []
-            if int(op.req_leg_id) > 0:
-                unload_material_ids.extend([int(op.req_leg_id), int(op.req_leg_id)])
-            if int(op.req_top_id) > 0:
-                unload_material_ids.append(int(op.req_top_id))
-
-            if not unload_material_ids:
-                print("[MES] No materials to unload for assembly.")
-                return
-
-            # ---- Phase A: Transfer all needed parts from W2 → W1 via U1 ----
-            print(
-                f"[MES] Assembly phase A: Transferring {len(unload_material_ids)} "
-                f"part(s) from W2 to W1 via U1."
-            )
-            for material_id in unload_material_ids:
-                print(f"[MES]   U1 transfer type={material_id}")
-                u1_ok = await pulse_unload_request("U1", material_id)
-                if not u1_ok:
-                    print(f"[MES]   U1 pulse FAILED for type={material_id}.")
-                    return
-                arrived = await _wait_for_w1_type_increment(material_id)
-                if not arrived:
-                    print(
-                        f"[MES]   Type={material_id} count did not increase "
-                        "in W1 after U1 transfer."
-                    )
-                    return
-                if material_id in (5, 8):
-                    self._est_w2["legs"] = max(0, self._est_w2["legs"] - 1)
-                    self._est_w1["legs"] += 1
-                elif material_id in (3, 4, 6, 7):
-                    self._est_w2["tops"] = max(0, self._est_w2["tops"] - 1)
-                    self._est_w1["tops"] += 1
-                print(f"[MES]   Type={material_id} confirmed in W1.")
-
-            # ---- Phase B: Feed pieces to assembly machine sequentially ----
-            leg_type = int(op.req_leg_id)
-            top_type = int(op.req_top_id)
-            all_cell_machines = UNLOAD_KEY_TO_MACHINES[unload_key]
-            conveyor_id = MACHINE_TO_CONVEYOR[machine]
-            tool_slot = TOOL_TO_SLOT.get(machine, {}).get(op.tool)
-
-            # Define the 3 feeder steps: 2x SWALLOW legs, 1x ASSEMBLE top
-            feeder_steps = [
-                {"action": "SWALLOW", "material_id": leg_type, "target_id": leg_type},
-                {"action": "SWALLOW", "material_id": leg_type, "target_id": leg_type},
-                {"action": "ASSEMBLE", "material_id": top_type, "target_id": int(op.target_id)},
-            ]
-
-            for step_idx, step in enumerate(feeder_steps):
-                material_id = step["material_id"]
-
-                # Wait for cell to be free (between steps or initially)
-                while self._cell_busy.get(unload_key, False):
-                    await asyncio.sleep(0.3)
-
-                self._cell_busy[unload_key] = True
-                try:
-                    # CMD to all machines in cell
-                    for cm in all_cell_machines:
-                        if cm == machine:
-                            if step["action"] == "SWALLOW":
-                                cmd = {
-                                    "action_type": 2,
-                                    "process_ms": 0,
-                                    "target_id": int(step["target_id"]),
-                                    "needed_tool_slot": 0,
-                                    "req_top_id": int(op.req_top_id),
-                                    "req_leg_id": int(op.req_leg_id),
-                                    "req_join_tool": int(op.req_join_tool),
-                                }
-                            else:
-                                cmd = {
-                                    "action_type": 3,
-                                    "process_ms": int(op.duration_s * 1000),
-                                    "target_id": int(step["target_id"]),
-                                    "needed_tool_slot": int(tool_slot) if tool_slot is not None else 0,
-                                    "req_top_id": int(op.req_top_id),
-                                    "req_leg_id": int(op.req_leg_id),
-                                    "req_join_tool": int(op.req_join_tool),
-                                }
-                            print(
-                                f"[MES] Cell {unload_key} "
-                                f"Step {step_idx+1}/3 {step['action']} CMD {cm}: "
-                                f"action={cmd['action_type']} target={cmd['target_id']}"
-                            )
-                            ok = await send_machine_command(cm, cmd)
-                            if not ok:
-                                print(f"[MES]   {step['action']} CMD failed.")
-                                return
-                        else:
-                            pass_cmd = {
-                                "action_type": 0, "process_ms": 0, "target_id": 0,
-                                "needed_tool_slot": 0, "req_top_id": 0,
-                                "req_leg_id": 0, "req_join_tool": 0,
-                            }
-                            await send_machine_command(cm, pass_cmd)
-
-                    # Unload piece from W1 to conveyor
-                    print(
-                        f"[MES] Cell {unload_key} "
-                        f"Step {step_idx+1}/3 PULSE material={material_id}"
-                    )
-                    unload_ok = await _pulse_unload_with_wait(unload_key, material_id)
-                    if not unload_ok:
-                        print(f"[MES]   {step['action']} unload FAILED.")
-                        return
-
-                    # Update est tracking
-                    if material_id in (5, 8):
-                        self._est_w1["legs"] = max(0, self._est_w1["legs"] - 1)
-                    elif material_id in (3, 4, 6, 7):
-                        self._est_w1["tops"] = max(0, self._est_w1["tops"] - 1)
-
-                    # Wait for completion
-                    if step["action"] == "SWALLOW":
-                        arrived = await _wait_for_saved_leg_increment(
-                            conveyor_id, material_id
-                        )
-                        if not arrived:
-                            print(
-                                f"[MES]   Leg type={material_id} "
-                                "NOT stored in conveyor."
-                            )
-                            return
-                        print(
-                            f"[MES]   Leg type={material_id} stored in conveyor "
-                            f"(step {step_idx+1}/3)."
-                        )
-                    else:
-                        arrived = await _wait_for_w2_type(int(op.target_id))
-                        if not arrived:
-                            print(
-                                f"[MES]   Final piece {op.target_id} "
-                                "NOT seen in W2 after assembly."
-                            )
-                            return
-                        print(
-                            f"[MES]   Final piece {op.target_id} ARRIVED in W2 "
-                            f"(step 3/3)."
-                        )
-
-                finally:
-                    self._cell_busy[unload_key] = False
-
-            # ---- Phase C: Ship final piece to output ----
-            output_lanes = ["U7", "U8", "U9", "U10"]
-            lane = output_lanes[self._next_output_index % len(output_lanes)]
-            self._next_output_index += 1
-            ship_ok = await _pulse_ship_final_with_confirm(lane, int(op.target_id))
-            if not ship_ok:
-                print(f"[MES] Failed to ship final piece via {lane}.")
-                return
-            self._est_w2["final"] += 1
-
-        self._record_machine_tool_stats(machine, op.tool, 1, op.piece_type)
-
-        unload_snapshot = await read_unloading_snapshot()
-        if unload_snapshot:
-            self._record_unloading_stats(unload_snapshot)
-
-        if op.action == "ASSEMBLE":
-            self.update_item_completion(chosen_item["id"], produced_count=1)
-        self._apply_inventory_delta(chosen_item["piece_type"], op)
         self.sync_order_status()
         self._update_estimated_completion_days()
 
@@ -1289,7 +1338,7 @@ async def run_mes_loop(poll_seconds=2.0):
     shutdown = asyncio.Event()
 
     def _signal_handler():
-        print("[MES] Shutdown signal received, closing OPC-UA client...")
+        logger.info("[MES] Shutdown signal received, closing OPC-UA client...")
         shutdown.set()
 
     loop = asyncio.get_running_loop()
@@ -1306,11 +1355,11 @@ async def run_mes_loop(poll_seconds=2.0):
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                print(f"[MES] Loop error: {exc}")
+                logger.info(f"[MES] Loop error: {exc}")
             await asyncio.sleep(poll_seconds)
     finally:
         await close_client()
-        print("[MES] OPC-UA client closed.")
+        logger.info("[MES] OPC-UA client closed.")
 
 
 if __name__ == "__main__":
