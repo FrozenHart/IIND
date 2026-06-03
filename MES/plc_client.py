@@ -570,5 +570,38 @@ async def read_conveyor_saved_leg(conveyor_id):
         return None
 
 
+async def read_output_conveyor_empty(lane: int):
+    """Reads O{lane}.EMPTY via OPC-UA. Returns True when conveyor is empty."""
+    async def _impl():
+        client = await _get_bg_client_async()
+        sm = PLCSymbolMap(client)
+        node = await sm._resolve_node(f"O{lane}.EMPTY")
+        val = bool(await node.read_value())
+        logger.info(f"[PLC] read O{lane}.EMPTY = {val}")
+        return val
+    try:
+        return await _run_async_on_bg(_impl())
+    except Exception as exc:
+        logger.info(f"[PLC] read O{lane}.EMPTY failed: {exc}")
+        return None
+
+
+async def write_output_unload(lane: int, value: bool):
+    """Writes Output_Unload_O{lane} = value (level, not pulse)."""
+    async def _impl():
+        client = await _get_bg_client_async()
+        sm = PLCSymbolMap(client)
+        node = await sm._resolve_node(f"Output_Unload_O{lane}")
+        await node.write_value(ua.Variant(bool(value), ua.VariantType.Boolean))
+        read_back = bool(await node.read_value())
+        logger.info(f"[PLC] wrote Output_Unload_O{lane}={value}, read_back={read_back}")
+        return True
+    try:
+        return await _run_async_on_bg(_impl())
+    except Exception as exc:
+        logger.info(f"[PLC] write_output_unload(O{lane}) failed: {exc}")
+        return False
+
+
 if __name__ == "__main__":
     asyncio.run(send_to_plc("M1a", "T1", "CREATE", operations_count=1))

@@ -22,6 +22,8 @@ from plc_client import (
     read_conveyor_state,
     read_conveyor_saved_leg,
     read_conveyor_recv,
+    read_output_conveyor_empty,
+    write_output_unload,
 )
 
 DB_HOST = "localhost"
@@ -86,6 +88,8 @@ UNLOAD_KEY_TO_LOADING_CONV = {
     "U2": "L2", "U3": "L3", "U4": "L4", "U5": "L5",
 }
 
+OUTPUT_CONV_MAP = {2: "U7", 3: "U8", 4: "U9", 5: "U10"}
+
 
 class MESService:
     def __init__(self):
@@ -102,9 +106,14 @@ class MESService:
         self._est_w1 = {"raw_wood": 0, "raw_metal": 0, "legs": 0, "tops": 0}
         self._est_w2 = {"legs": 0, "tops": 0, "final": 0}
         self._tool_machine_index = {}
-        self._next_output_index = 0
         self._cell_busy = {"U2": False, "U3": False, "U4": False, "U5": False}
         self._u1_lock = asyncio.Lock()
+        self._current_day = None
+        self._output_conv_state = {1: "free", 2: "free", 3: "free", 4: "free", 5: "free"}
+        self._output_conv_order = {1: None, 2: None, 3: None, 4: None, 5: None}
+        self._output_conv_shipped = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+        self._output_conv_total = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+        self._order_to_conv = {}
 
     def _conn(self):
         return psycopg2.connect(
@@ -124,6 +133,19 @@ class MESService:
                 if row is None:
                     return 0
                 return int(row[0])
+        except Exception:
+            return 0
+
+    def _get_order_total_quantity(self, order_id):
+        try:
+            with self._conn() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT SUM(quantity_ordered) FROM production_orders WHERE orderid = %s",
+                    (order_id,),
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row and row[0] else 0
         except Exception:
             return 0
 
@@ -483,6 +505,46 @@ class MESService:
     def _machines_for_tool(tool):
         return [m for m, tools in MACHINE_TOOLS.items() if tool in tools]
 
+    async def flush_output_conveyors(self):
+        flushed = False
+        for lane in range(2, 6):
+            state = self._output_conv_state[lane]
+            shipped = self._output_conv_shipped[lane]
+            total = self._output_conv_total[lane]
+            order_id = self._output_conv_order[lane]
+            logger.info(f"[MES] Output O{lane}: state={state}, shipped={shipped}/{total}, order={order_id}")
+            if state == "free":
+                continue
+            if shipped < total:
+                continue
+            logger.info(f"[MES] Output O{lane}: flushing order {order_id}...")
+            await write_output_unload(lane, True)
+            start = asyncio.get_event_loop().time()
+            timeout = 15.0
+            empty = False
+            poll_count = 0
+            while (asyncio.get_event_loop().time() - start) < timeout:
+                await asyncio.sleep(0.2)
+                empty = await read_output_conveyor_empty(lane)
+                poll_count += 1
+                if poll_count % 5 == 0:
+                    logger.info(f"[MES] Output O{lane}: poll #{poll_count}, elapsed={asyncio.get_event_loop().time()-start:.1f}s, EMPTY={empty}")
+                if empty:
+                    break
+            await write_output_unload(lane, False)
+            if empty:
+                self._output_conv_state[lane] = "free"
+                self._output_conv_order[lane] = None
+                if order_id in self._order_to_conv:
+                    del self._order_to_conv[order_id]
+                self._output_conv_shipped[lane] = 0
+                self._output_conv_total[lane] = 0
+                logger.info(f"[MES] Output O{lane}: flush complete, now free.")
+                flushed = True
+            else:
+                logger.info(f"[MES] Output O{lane}: flush timed out for order {order_id}.")
+        return flushed
+
     async def process_cycle(self):
         if not self._ensure_schema_ready():
             return
@@ -497,6 +559,12 @@ class MESService:
                 logger.info("[MES] Failed to push tool configuration to PLC.")
 
         current_day = self._get_current_day()
+
+        if self._current_day is not None and current_day != self._current_day:
+            logger.info(f"[MES] Day changed: {self._current_day} \u2192 {current_day}. Flushing output conveyors...")
+            await self.flush_output_conveyors()
+        self._current_day = current_day
+
         open_items = self.get_open_order_items(current_day)
         if not open_items:
             if not self._no_open_items_logged:
@@ -1213,14 +1281,32 @@ class MESService:
                 finally:
                     self._cell_busy[uk] = False
 
-                # Phase C: Ship
-                output_lanes = ["U7", "U8", "U9", "U10"]
-                lane = output_lanes[self._next_output_index % len(output_lanes)]
-                self._next_output_index += 1
-                ship_ok = await _pulse_ship_final_with_confirm(lane, int(op.target_id))
+                # Phase C: Ship via assigned output conveyor
+                order_id = order_item["order_id"]
+                conv_idx = self._order_to_conv.get(order_id)
+                if conv_idx is None:
+                    for idx in range(2, 6):
+                        if self._output_conv_state[idx] == "free":
+                            conv_idx = idx
+                            break
+                    if conv_idx is None:
+                        logger.info(f"[MES] Order {order_id}: no free O conveyor, shipping deferred.")
+                        return False
+                    total_qty = self._get_order_total_quantity(order_id)
+                    self._order_to_conv[order_id] = conv_idx
+                    self._output_conv_state[conv_idx] = "occupied"
+                    self._output_conv_order[conv_idx] = order_id
+                    self._output_conv_shipped[conv_idx] = 0
+                    self._output_conv_total[conv_idx] = total_qty
+                    logger.info(f"[MES] Order {order_id}: claimed O{conv_idx}, total={total_qty}")
+
+                u_lane = f"U{conv_idx + 5}"
+                ship_ok = await _pulse_ship_final_with_confirm(u_lane, int(op.target_id))
                 if not ship_ok:
-                    logger.info(f"[MES] Failed to ship final piece via {lane}.")
+                    logger.info(f"[MES] Failed to ship final piece via {u_lane}.")
                     return False
+                self._output_conv_shipped[conv_idx] += 1
+                logger.info(f"[MES] Order {order_id}: shipped {self._output_conv_shipped[conv_idx]}/{self._output_conv_total[conv_idx]} to O{conv_idx}")
                 self._est_w2["final"] += 1
 
                 self.update_item_completion(order_item["id"], produced_count=1)
