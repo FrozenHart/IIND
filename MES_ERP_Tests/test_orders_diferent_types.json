@@ -6,13 +6,13 @@
     "orders": [
       {
         "type": "RWW",
-        "quantity": 1,
+        "quantity": 2,
         "DDate": 3,
         "Penalty": 1.5
       },
       {
         "type": "SMM",
-        "quantity": 1,
+        "quantity": 2,
         "DDate": 3,
         "Penalty": 2.0
       }

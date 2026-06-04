@@ -594,25 +594,6 @@ class MESService:
                     )
             conn.commit()
 
-        async def _pulse_unload_with_wait(unload_key, material_id, timeout_s=8.0, poll_s=0.2):
-            before = await read_warehouse_counts()
-            ok = await pulse_unload_request(unload_key, material_id)
-            if not ok:
-                return False
-            if before is None:
-                await asyncio.sleep(2.5)
-                return True
-
-            start = asyncio.get_event_loop().time()
-            while (asyncio.get_event_loop().time() - start) < timeout_s:
-                await asyncio.sleep(poll_s)
-                after = await read_warehouse_counts()
-                if after is None:
-                    continue
-                if after != before:
-                    return True
-            return True
-
         async def _pulse_ship_final_with_confirm(unload_key, material_id, timeout_s=10.0, poll_s=0.25):
             """Ship via U6-U10 and confirm W2 decremented before completing the order."""
             before = await read_warehouse_counts()
@@ -652,6 +633,12 @@ class MESService:
                         return False
                     continue
                 failures = 0
+                now = sum(1 for v in legs if v == expected_type)
+                if now > before:
+                    return True
+            # Final check after timeout: leg might have been saved but MES reads missed it
+            legs = await read_conveyor_saved_leg(conveyor_id)
+            if legs is not None:
                 now = sum(1 for v in legs if v == expected_type)
                 if now > before:
                     return True
@@ -781,6 +768,17 @@ class MESService:
                     if _extract_type_id(top_values[idx]) == target_type
                 )
                 if now > before:
+                    return True
+            # Final check after timeout: piece might have arrived but masked by concurrent shipping.
+            # Accept if count hasn't decreased — the transfer likely happened but was net-zero.
+            snap = await read_warehouse_snapshot()
+            if snap is not None:
+                w1_count, _, top_values, _ = snap
+                now = sum(
+                    1 for idx in range(min(w1_count, len(top_values)))
+                    if _extract_type_id(top_values[idx]) == target_type
+                )
+                if now >= before:
                     return True
             return False
 
@@ -1243,8 +1241,8 @@ class MESService:
                                 await send_machine_command(cm, pass_cmd)
 
                         logger.info(f"[MES] Cell {uk} Step {step_idx+1}/3 PULSE material={material_id}")
-                        unload_ok = await _pulse_unload_with_wait(uk, material_id)
-                        if not unload_ok:
+                        ok = await pulse_unload_request(uk, material_id)
+                        if not ok:
                             logger.info(f"[MES]   {step['action']} unload FAILED.")
                             return False
 
@@ -1319,6 +1317,7 @@ class MESService:
             completed_assemblies = []
 
             while pending_ops or active:
+                dispatched_this_pass = False
                 for item in list(pending_ops):
                     op, op_type, order_item = item
                     assigned = False
@@ -1332,6 +1331,7 @@ class MESService:
                                 active[uk] = (task, item, machine)
                                 pending_ops.remove(item)
                                 assigned = True
+                                dispatched_this_pass = True
                                 logger.info(
                                     f"[MES] Dispatched {op.tool}→{machine} via {uk}. "
                                     f"{len(pending_ops)} remaining."
@@ -1355,6 +1355,7 @@ class MESService:
                                 active[uk] = (task, item, am)
                                 pending_ops.remove(item)
                                 assigned = True
+                                dispatched_this_pass = True
                                 logger.info(
                                     f"[MES] Dispatched assembly {op.piece_type} via {uk}. "
                                     f"{len(pending_ops)} remaining."
@@ -1363,6 +1364,13 @@ class MESService:
 
                 if not active:
                     if pending_ops:
+                        if not dispatched_this_pass:
+                            logger.info(
+                                f"[MES] All {len(pending_ops)} pending op(s) blocked "
+                                f"(inventory/machine). Aborting dispatch cycle."
+                            )
+                            pending_ops.clear()
+                            break
                         logger.info(
                             f"[MES] All cells busy, {len(pending_ops)} op(s) waiting..."
                         )

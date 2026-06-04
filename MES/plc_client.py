@@ -1,5 +1,4 @@
 import asyncio
-import threading
 from asyncua import Client, ua
 
 from mes_logger import setup_logger
@@ -7,80 +6,42 @@ from mes_logger import setup_logger
 logger = setup_logger("PLC")
 
 OPC_URL = "opc.tcp://127.0.0.1:4840"
-_bg_loop = None
-_bg_thread = None
-_bg_client = None
-_bg_lock = threading.Lock()
-_bg_client_lock = None  # initialized inside the background loop
+_client = None
+_client_lock = None
 
 
-def _get_bg_loop():
-    global _bg_loop, _bg_thread
-    with _bg_lock:
-        if _bg_loop is None:
-            _bg_loop = asyncio.new_event_loop()
-            _bg_thread = threading.Thread(
-                target=_bg_loop.run_forever,
-                daemon=True,
-                name="OPCUA_BgThread"
-            )
-            _bg_thread.start()
-        return _bg_loop
+async def _get_client():
+    global _client, _client_lock
+    if _client_lock is None:
+        _client_lock = asyncio.Lock()
 
-
-async def _get_bg_client_async():
-    global _bg_client, _bg_client_lock
-    if _bg_client_lock is None:
-        _bg_client_lock = asyncio.Lock()
-
-    async with _bg_client_lock:
-        if _bg_client is not None:
+    async with _client_lock:
+        if _client is not None:
             try:
-                # Health check: read standard ServerStatus.CurrentTime
-                # (ns=0;i=2258) which always has a Value attribute.
-                status_node = _bg_client.get_node("ns=0;i=2258")
+                status_node = _client.get_node("ns=0;i=2258")
                 await status_node.read_value()
-                return _bg_client
+                return _client
             except Exception as e:
                 logger.info(f"[PLC] Health check failed: {e}. Forcing reconnect.")
                 try:
-                    await _bg_client.disconnect()
+                    await _client.disconnect()
                 except Exception:
                     pass
-                _bg_client = None
+                _client = None
 
-        # Reconnect
-        _bg_client = Client(url=OPC_URL)
-        # Use a timeout to avoid hanging indefinitely
-        await asyncio.wait_for(_bg_client.connect(), timeout=5.0)
-        return _bg_client
-
-
-async def _run_async_on_bg(coro):
-    """Schedules a coroutine on the background loop and awaits its completion on the caller loop."""
-    loop = _get_bg_loop()
-    fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return await asyncio.wrap_future(fut)
+        _client = Client(url=OPC_URL)
+        await asyncio.wait_for(_client.connect(), timeout=5.0)
+        return _client
 
 
 async def close_client():
-    global _bg_client, _bg_loop
-    if _bg_loop is not None and _bg_client is not None:
-        async def _disconnect():
-            global _bg_client
-            if _bg_client is not None:
-                try:
-                    await _bg_client.disconnect()
-                except Exception:
-                    pass
-                _bg_client = None
-
+    global _client
+    if _client is not None:
         try:
-            fut = asyncio.run_coroutine_threadsafe(_disconnect(), _bg_loop)
-            await asyncio.wrap_future(fut)
+            await _client.disconnect()
         except Exception:
             pass
-    return None
+        _client = None
 
 
 NAMESPACE_CANDIDATES = [4, 3, 2]
@@ -357,10 +318,9 @@ class PLCSymbolMap:
 
 
 async def send_to_plc(machine_id, tool_id, action, operations_count=1, input_line=None):
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         symbol_map = PLCSymbolMap(client)
-        nonlocal input_line
         if input_line is None:
             input_line = MACHINE_TO_INPUT.get(machine_id)
         material_id = TOOL_TO_MATERIAL.get(tool_id)
@@ -388,9 +348,6 @@ async def send_to_plc(machine_id, tool_id, action, operations_count=1, input_lin
 
         logger.info(f"[PLC] Unsupported action for create-piece flow: {action}.")
         return False
-
-    try:
-        return await _run_async_on_bg(_impl())
     except Exception as exc:
         logger.info(f"[PLC] Failed to write to OPC-UA node: {exc}")
         return False
@@ -398,8 +355,8 @@ async def send_to_plc(machine_id, tool_id, action, operations_count=1, input_lin
 
 async def read_unloading_snapshot():
     """Reads unload request/material nodes U1..U10 for MES statistics."""
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         symbol_map = PLCSymbolMap(client)
         snapshot = {}
         for i in range(1, 11):
@@ -410,39 +367,30 @@ async def read_unloading_snapshot():
                 "material": material_value,
             }
         return snapshot
-
-    try:
-        return await _run_async_on_bg(_impl())
     except Exception as exc:
         logger.info(f"[PLC] Unable to read unloading snapshot: {exc}")
         return {}
 
 
 async def read_warehouse_counts():
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         symbol_map = PLCSymbolMap(client)
         w1_node = await symbol_map._resolve_node("W1_Count")
         w2_node = await symbol_map._resolve_node("W2_Count")
         w1_value = await w1_node.read_value()
         w2_value = await w2_node.read_value()
         return int(w1_value), int(w2_value)
-
-    try:
-        return await _run_async_on_bg(_impl())
     except Exception as exc:
         logger.info(f"[PLC] Unable to read warehouse counts: {exc}")
         return None
 
 
 async def read_warehouse_snapshot():
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         symbol_map = PLCSymbolMap(client)
         return await symbol_map.read_warehouse_snapshot()
-
-    try:
-        return await _run_async_on_bg(_impl())
     except asyncio.CancelledError:
         return None
     except Exception as exc:
@@ -451,29 +399,23 @@ async def read_warehouse_snapshot():
 
 
 async def pulse_unload_request(unload_key, material_id=0, pulses=1):
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         symbol_map = PLCSymbolMap(client)
         for _ in range(max(1, int(pulses))):
             await symbol_map.pulse_unload_request(unload_key, material_id)
         return True
-
-    try:
-        return await _run_async_on_bg(_impl())
     except Exception as exc:
         logger.info(f"[PLC] Unable to pulse unload request {unload_key}: {exc}")
         return False
 
 
 async def write_tool_configuration(tool_map, tool_times):
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         symbol_map = PLCSymbolMap(client)
         await symbol_map.write_tool_configuration(tool_map, tool_times)
         return True
-
-    try:
-        return await _run_async_on_bg(_impl())
     except Exception as exc:
         logger.info(f"[PLC] Unable to write tool configuration: {exc}")
         return False
@@ -485,8 +427,8 @@ async def send_machine_command(machine_id, command):
         logger.info(f"[PLC] No conveyor mapping found for machine {machine_id}.")
         return False
 
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         symbol_map = PLCSymbolMap(client)
         await symbol_map.write_machine_command(conveyor_id, command)
         logger.info(
@@ -495,26 +437,20 @@ async def send_machine_command(machine_id, command):
             f"time_ms={command['process_ms']}."
         )
         return True
-
-    try:
-        return await _run_async_on_bg(_impl())
     except Exception as exc:
         logger.info(f"[PLC] Unable to send machine command: {exc}")
         return False
 
 
 async def read_conveyor_state(conveyor_id):
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         sm = PLCSymbolMap(client)
         action_node = await sm._resolve_node(f"{conveyor_id}.Action_Type")
         free_node = await sm._resolve_node(f"{conveyor_id}.free_O")
         action_val = int(await action_node.read_value())
         free_val = bool(await free_node.read_value())
         return {"action_type": action_val, "free": free_val}
-
-    try:
-        return await _run_async_on_bg(_impl())
     except asyncio.CancelledError:
         return None
     except Exception:
@@ -522,14 +458,11 @@ async def read_conveyor_state(conveyor_id):
 
 
 async def read_conveyor_piece_in(conveyor_id):
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         sm = PLCSymbolMap(client)
         node = await sm._resolve_node(f"{conveyor_id}.Piece_In")
         return int(await node.read_value())
-
-    try:
-        return await _run_async_on_bg(_impl())
     except asyncio.CancelledError:
         return None
     except Exception:
@@ -538,14 +471,11 @@ async def read_conveyor_piece_in(conveyor_id):
 
 async def read_conveyor_recv(conveyor_id):
     """Reads recv_i from a loading conveyor. True when receiving a piece."""
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         sm = PLCSymbolMap(client)
         node = await sm._resolve_node(f"{conveyor_id}.recv_i")
         return bool(await node.read_value())
-
-    try:
-        return await _run_async_on_bg(_impl())
     except asyncio.CancelledError:
         return None
     except Exception:
@@ -554,17 +484,14 @@ async def read_conveyor_recv(conveyor_id):
 
 async def read_conveyor_saved_leg(conveyor_id):
     """Returns (saved_leg1, saved_leg2) UINT values for a conveyor."""
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         sm = PLCSymbolMap(client)
         leg1_node = await sm._resolve_node(f"{conveyor_id}.Saved_Leg1")
         leg2_node = await sm._resolve_node(f"{conveyor_id}.Saved_Leg2")
         leg1 = int(await leg1_node.read_value())
         leg2 = int(await leg2_node.read_value())
         return leg1, leg2
-
-    try:
-        return await _run_async_on_bg(_impl())
     except Exception as exc:
         logger.info(f"[PLC] Unable to read {conveyor_id}.Saved_Leg: {exc}")
         return None
@@ -572,15 +499,13 @@ async def read_conveyor_saved_leg(conveyor_id):
 
 async def read_output_conveyor_empty(lane: int):
     """Reads O{lane}.EMPTY via OPC-UA. Returns True when conveyor is empty."""
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         sm = PLCSymbolMap(client)
         node = await sm._resolve_node(f"O{lane}.EMPTY")
         val = bool(await node.read_value())
         logger.info(f"[PLC] read O{lane}.EMPTY = {val}")
         return val
-    try:
-        return await _run_async_on_bg(_impl())
     except Exception as exc:
         logger.info(f"[PLC] read O{lane}.EMPTY failed: {exc}")
         return None
@@ -588,16 +513,14 @@ async def read_output_conveyor_empty(lane: int):
 
 async def write_output_unload(lane: int, value: bool):
     """Writes Output_Unload_O{lane} = value (level, not pulse)."""
-    async def _impl():
-        client = await _get_bg_client_async()
+    try:
+        client = await _get_client()
         sm = PLCSymbolMap(client)
         node = await sm._resolve_node(f"Output_Unload_O{lane}")
         await node.write_value(ua.Variant(bool(value), ua.VariantType.Boolean))
         read_back = bool(await node.read_value())
         logger.info(f"[PLC] wrote Output_Unload_O{lane}={value}, read_back={read_back}")
         return True
-    try:
-        return await _run_async_on_bg(_impl())
     except Exception as exc:
         logger.info(f"[PLC] write_output_unload(O{lane}) failed: {exc}")
         return False
