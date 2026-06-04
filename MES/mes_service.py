@@ -15,6 +15,7 @@ from plc_client import (
     read_unloading_snapshot,
     send_to_plc,
     send_machine_command,
+    confirm_machine_command,
     read_warehouse_counts,
     pulse_unload_request,
     write_tool_configuration,
@@ -106,6 +107,7 @@ class MESService:
         self._est_w1 = {"raw_wood": 0, "raw_metal": 0, "legs": 0, "tops": 0}
         self._est_w2 = {"legs": 0, "tops": 0, "final": 0}
         self._tool_machine_index = {}
+        self._input_line_index = 0
         self._cell_busy = {"U2": False, "U3": False, "U4": False, "U5": False}
         self._u1_lock = asyncio.Lock()
         self._current_day = None
@@ -921,42 +923,49 @@ class MESService:
         slots_used = (pipeline + 2) // 3
         slots_free = max(0, 10 - slots_used)
 
-        # Select orders up to slots_free capacity
+        # Step 1: Always process at least one assembly-ready order (slot already allocated at CREATE)
         assembly_item = _choose_assembly_item(open_items, snapshot)
         selected_orders = []
+        remaining_slots = slots_free
+
         if assembly_item:
-            selected_orders.append(assembly_item)
-        for item in open_items:
-            oid = item.get("order_id")
-            if any(o["order_id"] == oid for o in selected_orders):
+            need = int(assembly_item["quantity_ordered"]) - int(assembly_item["quantity_completed"])
+            selected_orders.append((assembly_item, need))
+
+        # Step 2: Fill remaining pipeline slots with transform orders by priority
+        for item in sorted(open_items, key=_assembly_priority):
+            if any(s[0]["order_id"] == item["order_id"] for s in selected_orders):
                 continue
-            if len(selected_orders) >= max(1, slots_free):
+            if remaining_slots <= 0:
                 break
-            selected_orders.append(item)
+            need = int(item["quantity_ordered"]) - int(item["quantity_completed"])
+            share = min(need, remaining_slots)
+            if share <= 0:
+                continue
+            selected_orders.append((item, share))
+            remaining_slots -= share
 
         if not selected_orders:
             self.sync_order_status()
             self._update_estimated_completion_days()
             return
 
-        order_share = max(1, slots_free // max(1, len(selected_orders)))
-        if len(selected_orders) > 1:
-            logger.info(
-                f"[MES] Active orders selected={len(selected_orders)}; "
-                f"share={order_share} table(s) per order, "
-                f"slots_free={slots_free}."
-            )
+        logger.info(
+            f"[MES] Selected {len(selected_orders)} order(s) "
+            f"(slots_free={slots_free}): "
+            + ", ".join(f"order {s[0]['order_id']}(need={int(s[0]['quantity_ordered'])-int(s[0]['quantity_completed'])},alloc={s[1]})" for s in selected_orders)
+        )
 
         all_transform_ops = []
         all_assemble_ops = []
-        first_item = selected_orders[0]
-        for sel in selected_orders:
+        first_item = selected_orders[0][0]
+        for sel, share in selected_orders:
             ops = self.recipe_engine.next_batch(
                 piece_type=sel["piece_type"],
                 ordered_qty=sel["quantity_ordered"],
                 completed_qty=sel["quantity_completed"],
                 inventory=inventory,
-                max_tables=order_share,
+                max_tables=share,
             )
             if ops is None:
                 continue
@@ -1018,28 +1027,30 @@ class MESService:
             logger.info(
                 f"[MES] Phase 1: Creating {len(phase1_pairs)} raw piece(s) sequentially."
             )
+            input_lines = ["I1", "I2", "I3", "I4", "I5"]
             for op, machine in phase1_pairs:
                 raw_type_id = int(op.material_id)
-                machine_line = MACHINE_TO_INPUT.get(machine, "?")
-                loading_conv = INPUT_TO_LOADING_CONV.get(machine_line)
+                selected_line = input_lines[self._input_line_index % len(input_lines)]
+                self._input_line_index += 1
+                loading_conv = INPUT_TO_LOADING_CONV.get(selected_line)
                 if not loading_conv:
-                    logger.info(f"[MES]   No loading conveyor for {machine_line}.")
+                    logger.info(f"[MES]   No loading conveyor for {selected_line}.")
                     return
-                free = await _wait_for_input_free(loading_conv, timeout_s=120.0)
+                free = await _wait_for_input_free(loading_conv, timeout_s=120.0, poll_s=0.05)
                 if not free:
-                    logger.info(f"[MES]   Input {machine_line} ({loading_conv}) still busy; aborting.")
+                    logger.info(f"[MES]   Input {selected_line} ({loading_conv}) still busy; aborting.")
                     return
                 logger.info(
                     f"[MES]   CREATE type={raw_type_id} on {machine} "
-                    f"(line={machine_line}) using tool={op.tool}."
+                    f"(line={selected_line}) using tool={op.tool}."
                 )
                 create_ok = await send_to_plc(
-                    machine, op.tool, "CREATE", operations_count=1,
+                    machine, op.tool, "CREATE", operations_count=1, input_line=selected_line,
                 )
                 if not create_ok:
                     logger.info(f"[MES]   CREATE failed for {machine}.")
                     return
-                arrived = await _wait_for_loading_piece(loading_conv, raw_type_id, timeout_s=15.0)
+                arrived = await _wait_for_loading_piece(loading_conv, raw_type_id, timeout_s=15.0, poll_s=0.05)
                 if not arrived:
                     logger.info(
                         f"[MES]   Raw type={raw_type_id} not detected on "
@@ -1106,6 +1117,20 @@ class MESService:
                             }
                             logger.info(f"[MES] Cell {uk} CMD {cm}: pass-through (action=0)")
                             await send_machine_command(cm, cmd)
+
+                    # Confirm CMDs were applied by the PLC before triggering the pulse
+                    for cm in all_cell_machines:
+                        desired = {
+                            "action_type": 1 if cm == machine else 0,
+                            "process_ms": int(op.duration_s * 1000) if cm == machine else 0,
+                            "target_id": int(op.target_id) if cm == machine else 0,
+                            "needed_tool_slot": int(TOOL_TO_SLOT.get(cm, {}).get(op.tool, 0)) if cm == machine else 0,
+                        }
+                        await asyncio.sleep(0.1)
+                        confirmed = await confirm_machine_command(cm, desired)
+                        if not confirmed:
+                            logger.info(f"[MES] Cell {uk}: CMD confirmation FAILED for {cm}, aborting.")
+                            return False
 
                     logger.info(f"[MES] Cell {uk} PULSE Unload_Req_{uk} type={raw_type_id}")
                     unload_ok = await pulse_unload_request(uk, raw_type_id)
@@ -1240,6 +1265,33 @@ class MESService:
                                 }
                                 await send_machine_command(cm, pass_cmd)
 
+                        # Confirm all CMDs were applied before pulsing
+                        for confirm_cm in all_cell_machines:
+                            if confirm_cm == machine:
+                                if step["action"] == "SWALLOW":
+                                    desired = {
+                                        "action_type": 2, "process_ms": 0,
+                                        "target_id": int(step["target_id"]),
+                                        "needed_tool_slot": 0,
+                                    }
+                                else:
+                                    desired = {
+                                        "action_type": 3,
+                                        "process_ms": int(op.duration_s * 1000),
+                                        "target_id": int(step["target_id"]),
+                                        "needed_tool_slot": int(tool_slot) if tool_slot is not None else 0,
+                                    }
+                            else:
+                                desired = {
+                                    "action_type": 0, "process_ms": 0,
+                                    "target_id": 0, "needed_tool_slot": 0,
+                                }
+                            await asyncio.sleep(0.1)
+                            confirmed = await confirm_machine_command(confirm_cm, desired)
+                            if not confirmed:
+                                logger.info(f"[MES] Cell {uk} step {step_idx+1}: CMD confirm FAILED on {confirm_cm}, aborting.")
+                                return False
+
                         logger.info(f"[MES] Cell {uk} Step {step_idx+1}/3 PULSE material={material_id}")
                         ok = await pulse_unload_request(uk, material_id)
                         if not ok:
@@ -1339,6 +1391,10 @@ class MESService:
                                 break
 
                     elif op_type == "ASSEMBLE":
+                        # Wait for all transforms before starting any assembly
+                        if any(o[1] == "TRANSFORM" for o in pending_ops) or \
+                           any(v[1] == "TRANSFORM" for v in active.values()):
+                            continue
                         snap = await read_warehouse_snapshot()
                         if snap:
                             counts = _piece_inventory(snap)

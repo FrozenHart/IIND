@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from asyncua import Client, ua
 
 from mes_logger import setup_logger
@@ -6,13 +7,15 @@ from mes_logger import setup_logger
 logger = setup_logger("PLC")
 
 OPC_URL = "opc.tcp://127.0.0.1:4840"
+
 _client = None
 _client_lock = None
 
 
 async def _get_client():
     global _client, _client_lock
-    if _client_lock is None:
+    loop = asyncio.get_running_loop()
+    if _client_lock is None or getattr(_client_lock, '_loop', None) is not loop:
         _client_lock = asyncio.Lock()
 
     async with _client_lock:
@@ -267,6 +270,23 @@ class PLCSymbolMap:
             ],
         )
 
+    async def read_machine_command(self, conveyor_id):
+        """Read back the current command values from the PLC for a conveyor."""
+        action_node = await self._resolve_node(f"{conveyor_id}.Action_Type")
+        process_node = await self._resolve_node(f"{conveyor_id}.Process_Time")
+        target_node = await self._resolve_node(f"{conveyor_id}.Target_ID")
+        needed_tool_node = await self._resolve_node(f"{conveyor_id}.Needed_Tool")
+        action_val = int(await action_node.read_value())
+        process_val = int(await process_node.read_value())
+        target_val = int(await target_node.read_value())
+        tool_val = int(await needed_tool_node.read_value())
+        return {
+            "action_type": action_val,
+            "process_ms": process_val,
+            "target_id": target_val,
+            "needed_tool_slot": tool_val,
+        }
+
     async def read_unload_requested(self, unload_key):
         if not unload_key.startswith("U"):
             raise ValueError(f"Unknown unload key: {unload_key}")
@@ -439,6 +459,50 @@ async def send_machine_command(machine_id, command):
         return True
     except Exception as exc:
         logger.info(f"[PLC] Unable to send machine command: {exc}")
+        return False
+
+
+async def confirm_machine_command(machine_id, command, max_retries=3):
+    """Read back key nodes and verify they match the command. Retries on mismatch."""
+    conveyor_id = MACHINE_TO_CONVEYOR.get(machine_id)
+    if not conveyor_id:
+        logger.info(f"[PLC] No conveyor mapping for {machine_id}.")
+        return False
+
+    try:
+        client = await _get_client()
+        symbol_map = PLCSymbolMap(client)
+        wanted = {
+            "action_type": int(command["action_type"]),
+            "process_ms": int(command["process_ms"]),
+            "target_id": int(command["target_id"]),
+            "needed_tool_slot": int(command["needed_tool_slot"]),
+        }
+
+        for attempt in range(1, max_retries + 1):
+            await asyncio.sleep(0.1)
+            actual = await symbol_map.read_machine_command(conveyor_id)
+            ok = (
+                actual["action_type"] == wanted["action_type"]
+                and actual["target_id"] == wanted["target_id"]
+                and actual["needed_tool_slot"] == wanted["needed_tool_slot"]
+            )
+            logger.info(
+                f"[PLC] Confirm {conveyor_id} (attempt {attempt}/{max_retries}): "
+                f"Action={actual['action_type']} (wanted={wanted['action_type']}), "
+                f"Process={actual['process_ms']}ms (wanted={wanted['process_ms']}), "
+                f"Target={actual['target_id']} (wanted={wanted['target_id']}), "
+                f"Tool={actual['needed_tool_slot']} (wanted={wanted['needed_tool_slot']}) "
+                f"{'OK' if ok else 'MISMATCH'}"
+            )
+            if ok:
+                return True
+            logger.info(f"[PLC]   Mismatch on {conveyor_id}, rewriting command (attempt {attempt}/{max_retries})...")
+            await symbol_map.write_machine_command(conveyor_id, command)
+
+        return False
+    except Exception as exc:
+        logger.info(f"[PLC] Unable to confirm {conveyor_id}: {exc}")
         return False
 
 

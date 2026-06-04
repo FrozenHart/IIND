@@ -4,7 +4,7 @@
     "NIF": 789123456,
     "OrderID": 4001,
     "orders": [
-      { "type": "RWM", "quantity": 10, "DDate": 10, "Penalty": 1.0 }
+      { "type": "RWM", "quantity": 10, "DDate": 3, "Penalty": 1.0 }
     ]
   },
   {

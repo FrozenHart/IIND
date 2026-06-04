@@ -1,30 +1,19 @@
 import math
-from mes_recipe_engine import RecipeEngine
 
-# Rough simulation-day length in seconds (no config available — tune as needed)
-SECONDS_PER_SIM_DAY = 60
-# Overhead per table (ship, transfer, between-step gaps)
-OVERHEAD_PER_TABLE = 15
+# Observed average: 3 simulation days per table, up to 10 tables concurrently
+DAYS_PER_TABLE = 3
+MAX_CONCURRENT_TABLES = 10
 
 
 def estimate_completion_day(piece_type, remaining_tables, current_day):
     """Estimate the simulation day when the remaining tables finish.
 
-    Pipeline: 10 parallel table slots.
-    Per-table bottleneck = max(leg_tool_time, top_tool_time) + join_time + overhead.
+    Based on observed average: 3 days per table, up to 10 concurrent.
     """
-    piece_type = str(piece_type).upper()
-    profile = RecipeEngine.FINAL_RECIPES.get(piece_type)
-    if profile is None or remaining_tables <= 0:
+    if remaining_tables <= 0:
         return current_day
-
-    leg_time = int(profile["leg_time"])
-    top_time = int(profile["top_time"])
-    join_time = int(profile["join_time"])
-
-    per_table_sec = max(leg_time, top_time) + join_time + OVERHEAD_PER_TABLE
-    total_sec = remaining_tables * per_table_sec / 4
-    days_needed = math.ceil(total_sec / SECONDS_PER_SIM_DAY)
+    batches = math.ceil(remaining_tables / MAX_CONCURRENT_TABLES)
+    days_needed = batches * DAYS_PER_TABLE
     return current_day + days_needed
 
 
@@ -32,21 +21,13 @@ def estimate_order_completion(items, current_day):
     """Estimate completion day for an order with multiple recipe types.
 
     `items` — list of (piece_type, remaining_tables).
-    Uses the slowest per-table bottleneck across all recipes in the order.
+    Based on observed average: 3 days per table, up to 10 concurrent.
     """
-    total_tables = 0
-    worst_per_table = 0
-    for piece_type, remaining in items:
-        total_tables += int(remaining)
-        profile = RecipeEngine.FINAL_RECIPES.get(str(piece_type).upper())
-        if profile:
-            pt = max(int(profile["leg_time"]), int(profile["top_time"])) + int(profile["join_time"]) + OVERHEAD_PER_TABLE
-            if pt > worst_per_table:
-                worst_per_table = pt
+    total_tables = sum(int(remaining) for _, remaining in items)
     if total_tables == 0:
         return current_day
-    total_sec = total_tables * worst_per_table / 4
-    days_needed = math.ceil(total_sec / SECONDS_PER_SIM_DAY)
+    batches = math.ceil(total_tables / MAX_CONCURRENT_TABLES)
+    days_needed = batches * DAYS_PER_TABLE
     return current_day + days_needed
 
 
