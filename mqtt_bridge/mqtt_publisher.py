@@ -5,11 +5,10 @@ import psycopg2
 
 TB_HOST   = "thingsboard.cloud"
 TB_PORT   = 1883
-MES_TOKEN = "k46vqnDJEI3ZFKRcABhU"
-ERP_TOKEN = "dUJyNXoIX3UXQGN4QAtM"
+MES_TOKEN = "cjoFwM5Jq2VpHFaChwaq"
+ERP_TOKEN = "5CN037YqnYc9lHUpdg4J"
 
-ERP_DSN = "postgresql://femioyedotun@localhost:5433/erp_db"
-MES_DSN = "postgresql://femioyedotun@localhost:5433/mes_db"
+DSN = "postgresql://iind_user:IIND20266@localhost:5000/erp_db"
 
 INTERVAL = 5  # seconds
 
@@ -73,26 +72,25 @@ def publish(token, payload):
     )
 
 
-def connect_db(dsn, label):
+def connect_db():
     while True:
         try:
-            conn = psycopg2.connect(dsn)
-            print(f"[MQTT Publisher] Connected to {label}.")
+            conn = psycopg2.connect(DSN)
+            print("[MQTT Publisher] Connected to erp_db.")
             return conn
         except Exception as e:
-            print(f"[MQTT Publisher] {label} not available ({e}) — retrying in 5s...")
+            print(f"[MQTT Publisher] erp_db not available ({e}) — retrying in 5s...")
             time.sleep(5)
 
 
 def main():
     print("[MQTT Publisher] Starting...")
-    erp_conn = connect_db(ERP_DSN, "erp_db")
-    mes_conn = connect_db(MES_DSN, "mes_db")
+    conn = connect_db()
 
     while True:
         try:
-            mes_payload = fetch_mes_stats(mes_conn)
-            erp_payload = fetch_erp_stats(erp_conn)
+            mes_payload = fetch_mes_stats(conn)
+            erp_payload = fetch_erp_stats(conn)
 
             publish(MES_TOKEN, mes_payload)
             publish(ERP_TOKEN, erp_payload)
@@ -102,8 +100,7 @@ def main():
 
         except psycopg2.OperationalError as e:
             print(f"[MQTT Publisher] DB connection lost ({e}) — reconnecting...")
-            erp_conn = connect_db(ERP_DSN, "erp_db")
-            mes_conn = connect_db(MES_DSN, "mes_db")
+            conn = connect_db()
         except Exception as e:
             print(f"[MQTT Publisher] Error: {e}")
 
