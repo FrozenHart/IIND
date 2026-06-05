@@ -596,26 +596,50 @@ class MESService:
                     )
             conn.commit()
 
-        async def _pulse_ship_final_with_confirm(unload_key, material_id, timeout_s=10.0, poll_s=0.25):
-            """Ship via U6-U10 and confirm W2 decremented before completing the order."""
+        async def _pulse_ship_final_with_confirm(unload_key, material_id, timeout_s=10.0, poll_s=0.25, max_retries=3):
+            """Ship via U6-U10 and confirm W2 decremented before completing the order.
+            Retries the pulse up to max_retries times if W2 doesn't decrement."""
             before = await read_warehouse_counts()
-            ok = await pulse_unload_request(unload_key, material_id)
-            if not ok:
-                return False
             if before is None:
                 await asyncio.sleep(2.5)
                 return True
 
-            start = asyncio.get_event_loop().time()
-            before_w1, before_w2 = before
-            while (asyncio.get_event_loop().time() - start) < timeout_s:
-                await asyncio.sleep(poll_s)
-                after = await read_warehouse_counts()
-                if after is None:
-                    continue
-                _, after_w2 = after
-                if after_w2 < before_w2:
-                    return True
+            for attempt in range(1, max_retries + 1):
+                before_w2 = before[1]
+                ok = await pulse_unload_request(unload_key, material_id)
+                if not ok:
+                    if attempt < max_retries:
+                        await asyncio.sleep(1.0)
+                        before = await read_warehouse_counts()
+                        if before is None:
+                            await asyncio.sleep(2.5)
+                            return True
+                        continue
+                    return False
+
+                start = asyncio.get_event_loop().time()
+                while (asyncio.get_event_loop().time() - start) < timeout_s:
+                    await asyncio.sleep(poll_s)
+                    after = await read_warehouse_counts()
+                    if after is None:
+                        continue
+                    _, after_w2 = after
+                    if after_w2 < before_w2:
+                        return True
+
+                # W2 didn't decrement — log and retry
+                logger.info(
+                    f"[MES] {unload_key} pulse attempt {attempt}/{max_retries} for type={material_id}: "
+                    f"W2 did not decrement (was {before_w2}), retrying..."
+                )
+                if attempt < max_retries:
+                    await asyncio.sleep(2.0)
+                    before = await read_warehouse_counts()
+                    if before is None:
+                        await asyncio.sleep(2.5)
+                        return True
+
+            logger.info(f"[MES] {unload_key} failed after {max_retries} attempts for type={material_id}.")
             return False
 
         async def _wait_for_saved_leg_increment(conveyor_id, expected_type, timeout_s=10.0, poll_s=0.2, max_failures=10):
@@ -784,6 +808,31 @@ class MESService:
                     return True
             return False
 
+        async def _wait_for_w2_type_increment(target_type, timeout_s=10.0, poll_s=0.2):
+            """Wait until count of pieces with target_type in W2 increases."""
+            snap = await read_warehouse_snapshot()
+            if snap is None:
+                return False
+            _, w2_count, _, bottom_values = snap
+            before = sum(
+                1 for idx in range(min(w2_count, len(bottom_values)))
+                if _extract_type_id(bottom_values[idx]) == target_type
+            )
+            start = asyncio.get_event_loop().time()
+            while (asyncio.get_event_loop().time() - start) < timeout_s:
+                await asyncio.sleep(poll_s)
+                snap = await read_warehouse_snapshot()
+                if snap is None:
+                    continue
+                _, w2_count, _, bottom_values = snap
+                now = sum(
+                    1 for idx in range(min(w2_count, len(bottom_values)))
+                    if _extract_type_id(bottom_values[idx]) == target_type
+                )
+                if now > before:
+                    return True
+            return False
+
         async def _wait_for_w1_type_reduced(target_type, timeout_s=6.0, poll_s=0.2):
             """Wait until count of pieces with target_type in W1 decreases."""
             snap = await read_warehouse_snapshot()
@@ -828,12 +877,12 @@ class MESService:
         def _piece_inventory(snapshot):
             if snapshot is None:
                 return {"legs": {}, "tops": {}}
-            _, w2_count, _, bottom_values = snapshot
+            w1_count, _, top_values, _ = snapshot
             leg_counts = {}
             top_counts = {}
-            limit = min(w2_count, len(bottom_values))
+            limit = min(w1_count, len(top_values))
             for idx in range(limit):
-                type_id = _extract_type_id(bottom_values[idx])
+                type_id = _extract_type_id(top_values[idx])
                 if type_id in (5, 8):
                     leg_counts[type_id] = leg_counts.get(type_id, 0) + 1
                 elif type_id in (3, 4, 6, 7):
@@ -854,8 +903,11 @@ class MESService:
             return (due_val, -penalty_val, item.get("id", 0))
 
         def _choose_assembly_item(items, snapshot):
+            """Return all items with enough W1 inventory for assembly, in priority order,
+            deducting inventory along the way so later items don't double-count pieces."""
             if not items:
-                return None
+                return []
+            
             counts = _piece_inventory(snapshot)
             ready = []
             for item in items:
@@ -923,14 +975,14 @@ class MESService:
         slots_used = (pipeline + 2) // 3
         slots_free = max(0, 10 - slots_used)
 
-        # Step 1: Always process at least one assembly-ready order (slot already allocated at CREATE)
+        # Step 1: Pick as many assembly-ready items as W1 inventory allows
         assembly_item = _choose_assembly_item(open_items, snapshot)
         selected_orders = []
         remaining_slots = slots_free
-
         if assembly_item:
             need = int(assembly_item["quantity_ordered"]) - int(assembly_item["quantity_completed"])
             selected_orders.append((assembly_item, need))
+
 
         # Step 2: Fill remaining pipeline slots with transform orders by priority
         for item in sorted(open_items, key=_assembly_priority):
@@ -1148,14 +1200,29 @@ class MESService:
                         logger.info(f"[MES] Cell {uk}: target={op.target_id} NOT seen on {loading_conv}.")
                         return False
 
-                    if op.target_id in (5, 8):
-                        self._est_w2["legs"] += 1
-                    elif op.target_id in (3, 4, 6, 7):
-                        self._est_w2["tops"] += 1
-                    logger.info(
-                        f"[MES] Cell {uk}: est_w2 legs={self._est_w2['legs']} "
-                        f"tops={self._est_w2['tops']}"
-                    )
+                    # Immediately transfer legs/tops from W2 to W1 (cell stays busy during this)
+                    if op.target_id in (5, 8, 3, 4, 6, 7):
+                        w2_arrived = await _wait_for_w2_type_increment(int(op.target_id))
+                        if not w2_arrived:
+                            logger.error(f"[MES] Piece type={op.target_id} never reached W2 after transform.")
+                            return False
+                        async with self._u1_lock:
+                            u1_ok = await pulse_unload_request("U1", int(op.target_id))
+                            if not u1_ok:
+                                return False
+                            w1_arrived = await _wait_for_w1_type_increment(int(op.target_id))
+                            if not w1_arrived:
+                                logger.error(f"[MES] Piece type={op.target_id} never reached W1 after U1 transfer.")
+                                return False
+                        if op.target_id in (5, 8):
+                            self._est_w1["legs"] += 1
+                        elif op.target_id in (3, 4, 6, 7):
+                            self._est_w1["tops"] += 1
+                        logger.info(
+                            f"[MES] Transferred type={op.target_id} to W1: "
+                            f"est_w1 legs={self._est_w1['legs']} tops={self._est_w1['tops']}"
+                        )
+
                     return True
                 finally:
                     self._cell_busy[uk] = False
@@ -1180,38 +1247,10 @@ class MESService:
                     f"tool={op.tool}, target={op.target_id}, machine={machine}, cell={uk}"
                 )
 
-                unload_material_ids = []
-                if int(op.req_leg_id) > 0:
-                    unload_material_ids.extend([int(op.req_leg_id), int(op.req_leg_id)])
-                if int(op.req_top_id) > 0:
-                    unload_material_ids.append(int(op.req_top_id))
-                if not unload_material_ids:
+                if int(op.req_leg_id) <= 0 or int(op.req_top_id) <= 0:
                     return False
 
-                # Phase A: Transfer from W2→W1 via U1 (serialized across assemblies)
-                async with self._u1_lock:
-                    logger.info(
-                        f"[MES] Assembly phase A: Transferring {len(unload_material_ids)} "
-                        f"part(s) from W2 to W1 via U1."
-                    )
-                    for material_id in unload_material_ids:
-                        logger.info(f"[MES]   U1 transfer type={material_id}")
-                        u1_ok = await pulse_unload_request("U1", material_id)
-                        if not u1_ok:
-                            logger.info(f"[MES]   U1 pulse FAILED for type={material_id}.")
-                            return False
-                        arrived = await _wait_for_w1_type_increment(material_id)
-                        if not arrived:
-                            logger.info(f"[MES]   Type={material_id} count did not increase in W1 after U1 transfer.")
-                            return False
-                        if material_id in (5, 8):
-                            self._est_w2["legs"] = max(0, self._est_w2["legs"] - 1)
-                            self._est_w1["legs"] += 1
-                        elif material_id in (3, 4, 6, 7):
-                            self._est_w2["tops"] = max(0, self._est_w2["tops"] - 1)
-                            self._est_w1["tops"] += 1
-                        logger.info(f"[MES]   Type={material_id} confirmed in W1.")
-
+                # Phase A: skipped — pieces already transferred to W1 by transform
                 # Phase B: 3 feeder steps on acquired cell
                 self._cell_busy[uk] = True
                 try:
@@ -1391,10 +1430,7 @@ class MESService:
                                 break
 
                     elif op_type == "ASSEMBLE":
-                        # Wait for all transforms before starting any assembly
-                        if any(o[1] == "TRANSFORM" for o in pending_ops) or \
-                           any(v[1] == "TRANSFORM" for v in active.values()):
-                            continue
+                        # Inventory check handles availability — pieces are in W1 from transform
                         snap = await read_warehouse_snapshot()
                         if snap:
                             counts = _piece_inventory(snap)
