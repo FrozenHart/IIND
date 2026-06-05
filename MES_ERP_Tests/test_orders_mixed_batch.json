@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Client Low Urgency",
+    "NIF": 789123456,
+    "OrderID": 4001,
+    "orders": [
+      { "type": "RWM", "quantity": 10, "DDate": 3, "Penalty": 1.0 }
+    ]
+  },
+  {
+    "name": "Client Medium Urgency",
+    "NIF": 891234567,
+    "OrderID": 4002,
+    "orders": [
+      { "type": "SWW", "quantity": 6, "DDate": 5, "Penalty": 3.5 },
+      { "type": "RMM", "quantity": 4, "DDate": 5, "Penalty": 3.5 }
+    ]
+  },
+  {
+    "name": "Client High Penalty",
+    "NIF": 912345678,
+    "OrderID": 4003,
+    "orders": [
+      { "type": "SMM", "quantity": 8, "DDate": 3, "Penalty": 8.0 }
+    ]
+  }
+]

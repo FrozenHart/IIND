@@ -25,6 +25,7 @@ CREATE TABLE
         Penalty_Per_Day DECIMAL(10, 2) NOT NULL,
         Total_Cost DECIMAL(10, 2) DEFAULT 0.00,
         Status VARCHAR(20) DEFAULT 'Pending',
+        Estimated_Completion_Day INT DEFAULT NULL,
         PRIMARY KEY (OrderID),
         FOREIGN KEY (Client_NIF) REFERENCES Clients (NIF)
     );
@@ -70,6 +71,9 @@ CREATE TABLE
         Quantity_Produced INT DEFAULT 0,
         Status VARCHAR(20) DEFAULT 'Pending'
     );
+
+ALTER TABLE Orders ADD COLUMN IF NOT EXISTS Estimated_Completion_Day INT DEFAULT NULL;
+ALTER TABLE Production_Orders DROP COLUMN IF EXISTS Estimated_Completion_Day;
 
 CREATE TABLE
     IF NOT EXISTS Machine_Stats (

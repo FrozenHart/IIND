@@ -1,22 +1,13 @@
 import argparse
-import logging
 import subprocess
 import sys
 from pathlib import Path
 
+from mes_logger import setup_logger
+
 BASE_DIR = Path(__file__).resolve().parent
 
-
-def _setup_logger():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    return logging.getLogger("MES-LAUNCHER")
-
-
-LOGGER = _setup_logger()
+LOGGER = setup_logger("MES-LAUNCHER", console_only=True)
 
 
 def _spawn(cmd, name):

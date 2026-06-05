@@ -1,5 +1,36 @@
 import math
 
+# Observed average: 3 simulation days per table, up to 10 tables concurrently
+DAYS_PER_TABLE = 3
+MAX_CONCURRENT_TABLES = 10
+
+
+def estimate_completion_day(piece_type, remaining_tables, current_day):
+    """Estimate the simulation day when the remaining tables finish.
+
+    Based on observed average: 3 days per table, up to 10 concurrent.
+    """
+    if remaining_tables <= 0:
+        return current_day
+    batches = math.ceil(remaining_tables / MAX_CONCURRENT_TABLES)
+    days_needed = batches * DAYS_PER_TABLE
+    return current_day + days_needed
+
+
+def estimate_order_completion(items, current_day):
+    """Estimate completion day for an order with multiple recipe types.
+
+    `items` — list of (piece_type, remaining_tables).
+    Based on observed average: 3 days per table, up to 10 concurrent.
+    """
+    total_tables = sum(int(remaining) for _, remaining in items)
+    if total_tables == 0:
+        return current_day
+    batches = math.ceil(total_tables / MAX_CONCURRENT_TABLES)
+    days_needed = batches * DAYS_PER_TABLE
+    return current_day + days_needed
+
+
 # Machine capabilities based on the project documentation
 MACHINE_TOOLS = {
     "M1a": ["T1", "T2", "T3"], "M1b": ["T1", "T2", "T3"], "M1c": ["T8", "T9", "T11"],

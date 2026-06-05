@@ -1,3 +1,4 @@
+import math
 import psycopg2
 
 DB_HOST = "localhost"
@@ -52,10 +53,16 @@ def advance_day():
     conn.close()
     return day
 
+def _estimate_batch_days(total_tables):
+    """3 days per batch of up to 10 concurrent tables."""
+    batches = math.ceil(total_tables / 10)
+    return batches * 3
+
 def generate_mps():
     """
     Builds the Master Production Schedule from all pending orders.
-    Strategy: schedule each order for production on (DDate - 1), minimum day 1.
+    Strategy: schedule production start so it finishes by DDate,
+    accounting for 3 days per batch of 10 tables.
     Returns: dict of {production_day: [list of order dicts]}
     """
     conn = _get_db()
@@ -70,9 +77,21 @@ def generate_mps():
     cur.close()
     conn.close()
 
+    # Group rows by OrderID to get total tables per order
+    order_rows = {}
+    for row in rows:
+        order_rows.setdefault(row[0], []).append(row)
+
+    order_days = {}
+    for order_id, group in order_rows.items():
+        ddate = group[0][1]
+        total_tables = sum(r[4] for r in group)
+        estimated_days = _estimate_batch_days(total_tables)
+        order_days[order_id] = max(1, ddate - estimated_days)
+
     mps = {}
     for order_id, ddate, penalty, piece_type, qty in rows:
-        production_day = max(1, ddate - 1)
+        production_day = order_days[order_id]
         mps.setdefault(production_day, []).append({
             "OrderID":        order_id,
             "Piece":          piece_type,

@@ -4,9 +4,9 @@
   "OrderID": 1101,
   "orders": [
     {
-      "type": "RWM",
-      "quantity": 1,
-      "DDate": 2,
+      "type": "RWW",
+      "quantity": 2,
+      "DDate": 5,
       "Penalty": 2.5
     }
   ]

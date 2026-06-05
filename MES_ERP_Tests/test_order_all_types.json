@@ -1,0 +1,13 @@
+{
+  "name": "Client All Types",
+  "NIF": 567891234,
+  "OrderID": 2001,
+  "orders": [
+    { "type": "RWW", "quantity": 2, "DDate": 6, "Penalty": 2.0 },
+    { "type": "SWW", "quantity": 2, "DDate": 6, "Penalty": 2.0 },
+    { "type": "RWM", "quantity": 2, "DDate": 6, "Penalty": 2.0 },
+    { "type": "SWM", "quantity": 2, "DDate": 6, "Penalty": 2.0 },
+    { "type": "RMM", "quantity": 2, "DDate": 6, "Penalty": 2.0 },
+    { "type": "SMM", "quantity": 2, "DDate": 6, "Penalty": 2.0 }
+  ]
+}

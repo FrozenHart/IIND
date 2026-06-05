@@ -1,0 +1,9 @@
+{
+  "name": "Client Tight Deadline",
+  "NIF": 111222333,
+  "OrderID": 5001,
+  "orders": [
+    { "type": "RWW", "quantity": 8, "DDate": 1, "Penalty": 6.0 },
+    { "type": "SWM", "quantity": 6, "DDate": 1, "Penalty": 6.0 }
+  ]
+}

@@ -177,11 +177,15 @@ def fetch_order_overview():
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT id, orderid, piece_type, status,
-                   quantity_ordered, quantity_produced,
-                   COALESCE(production_day, 1) AS production_day
-            FROM production_orders
-            ORDER BY id DESC
+            SELECT po.id, po.orderid, po.piece_type, po.status,
+                   po.quantity_ordered, po.quantity_produced,
+                   COALESCE(po.production_day, 1) AS production_day,
+                   COALESCE(o.ddate, 0) AS ddate,
+                   COALESCE(o.penalty_per_day, 0) AS penalty_per_day,
+                   o.estimated_completion_day
+            FROM production_orders po
+            JOIN orders o ON po.orderid = o.orderid
+            ORDER BY po.id DESC
             """
         )
         rows = cur.fetchall()
@@ -195,6 +199,9 @@ def fetch_order_overview():
                 "quantity_ordered": row[4],
                 "quantity_produced": row[5],
                 "production_day": row[6],
+                "ddate": row[7],
+                "penalty_per_day": row[8],
+                "estimated_completion_day": row[9],
                 "quantity_pending": max(0, row[4] - row[5]),
                 "production_time_sec": row[5] * PIECE_EST_SECONDS.get(str(row[2]).upper(), 60),
             }
@@ -389,27 +396,65 @@ def split_orders_by_status(overview):
     return grouped
 
 
-def render_order_card(order, current_day):
-    ordered = max(1, as_int(order["quantity_ordered"]))
-    produced = as_int(order["quantity_produced"])
-    pending = as_int(order["quantity_pending"])
-    production_day = as_int(order.get("production_day", 1))
-    day_ready = production_day <= as_int(current_day)
-    progress_value = min(1.0, max(0.0, produced / float(ordered)))
+def group_orders_by_orderid(overview):
+    """Group piece-type rows by orderid into per-order dicts."""
+    orders = {}
+    for row in overview:
+        oid = row["order_id"]
+        if oid not in orders:
+            orders[oid] = {
+                "order_id": oid,
+                "items": [],
+                "ddate": as_int(row.get("ddate", 0)),
+                "penalty_per_day": float(row.get("penalty_per_day", 0)),
+                "estimated_completion_day": row.get("estimated_completion_day"),
+                "production_day": as_int(row.get("production_day", 1)),
+            }
+        else:
+            existing = orders[oid]["production_day"]
+            orders[oid]["production_day"] = min(existing, as_int(row.get("production_day", 1)))
+        orders[oid]["items"].append(row)
+    return list(orders.values())
+
+
+def render_order_card(grouped_order, current_day):
+    items = grouped_order["items"]
+    ddate = as_int(grouped_order.get("ddate", 0))
+    penalty = float(grouped_order.get("penalty_per_day", 0))
+    estimated = grouped_order.get("estimated_completion_day")
+    if estimated is not None:
+        estimated = as_int(estimated)
+    production_day = as_int(grouped_order.get("production_day", 1))
+
+    total_ordered = sum(as_int(r["quantity_ordered"]) for r in items)
+    total_produced = sum(as_int(r["quantity_produced"]) for r in items)
+    total_pending = sum(as_int(r["quantity_pending"]) for r in items)
+    progress_value = min(1.0, total_produced / total_ordered) if total_ordered > 0 else 0
+
+    if estimated is not None and ddate > 0 and estimated > ddate:
+        overdue_days = estimated - ddate
+        penalty_total = overdue_days * penalty
+        overdue_text = f"⚠️ {overdue_days}d overdue (€{penalty_total:.2f})"
+    elif estimated is not None:
+        overdue_text = "✅ On track"
+    else:
+        overdue_text = ""
 
     with st.container(border=True):
-        piece_label = order.get("piece_label", format_piece_type(order["piece_type"]))
-        st.markdown(f"**{order['order_id']} - {piece_label}**")
+        st.markdown(f"**{grouped_order['order_id']}**")
+        st.caption(f"Due day: {ddate}  |  Starts day: {production_day}  |  Est. completion: day {estimated or '?'}")
+        if overdue_text:
+            st.caption(overdue_text)
         st.progress(progress_value)
         col_a, col_b, col_c = st.columns(3)
-        col_a.metric("Produced", produced)
-        col_b.metric("Pending", pending)
-        col_c.metric("Target", ordered)
-        if day_ready:
-            st.caption(f"Production day: {production_day} (ready)")
-        else:
-            st.caption(f"Production day: {production_day} (waiting for day {production_day})")
-        st.caption(f"Produced-time estimate: {seconds_to_hms(order['production_time_sec'])}")
+        col_a.metric("Produced", total_produced)
+        col_b.metric("Pending", total_pending)
+        col_c.metric("Target", total_ordered)
+        if penalty > 0:
+            st.caption(f"Penalty: €{penalty:.2f}/day")
+        for item in items:
+            lbl = format_piece_type(item["piece_type"])
+            st.caption(f"  • {lbl}: {item['quantity_produced']}/{item['quantity_ordered']}")
 
 
 def render_order_lane(title, orders, empty_label, current_day):
@@ -595,10 +640,19 @@ def render_kpis(snapshot):
     k_col4.metric("Completed", status_summary["completed"])
     k_col5.metric("Future Queue", future_waiting)
 
-    k2_col1, k2_col2, k2_col3 = st.columns(3)
-    k2_col1.metric("Total Orders", len(overview))
+    # Count overdue orders (estimated > DDate)
+    overdue_orders = 0
+    for o in group_orders_by_orderid(overview):
+        est = o.get("estimated_completion_day")
+        ddate = o.get("ddate", 0)
+        if est is not None and ddate > 0 and as_int(est) > ddate:
+            overdue_orders += 1
+
+    k2_col1, k2_col2, k2_col3, k2_col4 = st.columns(4)
+    k2_col1.metric("Total Orders", len(set(r["order_id"] for r in overview)))
     k2_col2.metric("Produced Pieces", total_produced)
     k2_col3.metric("Pending Pieces", total_pending)
+    k2_col4.metric("Overdue", overdue_orders)
 
     st.caption(f"Estimated Produced Time: {seconds_to_hms(total_production_time)}")
 
@@ -611,7 +665,11 @@ def render_orders_page(snapshot):
         "Orders grouped by status. Future orders are queued immediately and executed when "
         "simulation day reaches their production day."
     )
-    grouped_orders = split_orders_by_status(overview)
+    grouped_rows = split_orders_by_status(overview)
+    grouped_orders = {
+        k: group_orders_by_orderid(v)
+        for k, v in grouped_rows.items()
+    }
     lane1, lane2, lane3 = st.columns(3)
     with lane1:
         render_order_lane("To Do", grouped_orders["pending"], "No pending orders.", current_day)
@@ -767,54 +825,106 @@ def render_plc_debug_page():
     st.dataframe(pd.DataFrame(cell_rows), width="stretch", hide_index=True)
 
 
-def render_all_pages(snapshot):
-    render_kpis(snapshot)
-
-    tab_orders, tab_algorithm, tab_machines, tab_unloading, tab_debug, tab_plc = st.tabs(
-        [
-            "Orders",
-            "Algorithm",
-            "Machine Statistics",
-            "Unloading",
-            "Raw Data",
-            "Live PLC Debug",
-        ]
-    )
-
-    with tab_orders:
-        render_orders_page(snapshot)
-    with tab_algorithm:
-        render_algorithm_page(snapshot)
-    with tab_machines:
-        render_machine_page(snapshot)
-    with tab_unloading:
-        render_unloading_page(snapshot)
-    with tab_debug:
-        render_debug_page(snapshot)
-    with tab_plc:
-        render_plc_debug_page()
-
-
-def render_static_all_pages():
+@st.fragment(run_every=5)
+def _render_kpis_fragment():
     try:
-        snapshot = load_dashboard_snapshot()
+        overview = fetch_order_overview()
+        current_day = fetch_current_day()
+        status_summary = fetch_status_summary(overview)
+        render_kpis({"overview": overview, "status_summary": status_summary, "current_day": current_day})
     except Exception as exc:
         render_database_error(exc)
-        return
 
-    render_all_pages(snapshot)
+
+@st.fragment(run_every=30)
+def _render_orders_fragment():
+    try:
+        overview = fetch_order_overview()
+        current_day = fetch_current_day()
+        render_orders_page({"overview": overview, "current_day": current_day})
+    except Exception as exc:
+        render_database_error(exc)
+
+
+@st.fragment(run_every=3)
+def _render_algorithm_fragment():
+    try:
+        overview = fetch_order_overview()
+        current_day = fetch_current_day()
+        priority_status = fetch_priority_status(overview, current_day)
+        render_priority_status(priority_status)
+    except Exception as exc:
+        render_database_error(exc)
+
+
+@st.fragment(run_every=10)
+def _render_machines_fragment():
+    try:
+        machine_stats = fetch_machine_stats()
+        machine_tool_stats = fetch_machine_tool_stats()
+        machine_piece_stats = fetch_machine_piece_stats()
+        overview = fetch_order_overview()
+        global_mix = fetch_operated_pieces_by_type(overview)
+        render_machine_page({
+            "machine_stats": machine_stats,
+            "machine_tool_stats": machine_tool_stats,
+            "machine_piece_stats": machine_piece_stats,
+            "global_piece_mix": global_mix,
+        })
+    except Exception as exc:
+        render_database_error(exc)
+
+
+@st.fragment(run_every=10)
+def _render_unloading_fragment():
+    try:
+        unloading_total = fetch_unloading_total_by_dock()
+        unloading_by_type = fetch_unloading_by_type()
+        render_unloading_stats(unloading_total, unloading_by_type)
+    except Exception as exc:
+        render_database_error(exc)
+
+
+@st.fragment(run_every=5)
+def _render_debug_fragment():
+    try:
+        snapshot = load_dashboard_snapshot()
+        render_debug_page(snapshot)
+    except Exception as exc:
+        render_database_error(exc)
+
+
+@st.fragment(run_every=5)
+def _render_plc_fragment():
+    render_plc_debug_page()
 
 
 def main():
     st.set_page_config(page_title="MES Monitor", layout="wide")
     st.title("MES Monitor")
 
-    header_col, refresh_col = st.columns([5, 1])
-    with refresh_col:
-        if st.button("Refresh", width="stretch"):
-            st.rerun()
+    st_autorefresh = getattr(st, "autorefresh", None)
+    if st_autorefresh is not None:
+        st_autorefresh(interval=30000, key="mes_monitor_page")
 
-    render_static_all_pages()
+    _render_kpis_fragment()
+
+    tab_orders, tab_algorithm, tab_machines, tab_unloading, tab_debug, tab_plc = st.tabs(
+        ["Orders", "Algorithm", "Machine Statistics", "Unloading", "Raw Data", "Live PLC Debug"]
+    )
+
+    with tab_orders:
+        _render_orders_fragment()
+    with tab_algorithm:
+        _render_algorithm_fragment()
+    with tab_machines:
+        _render_machines_fragment()
+    with tab_unloading:
+        _render_unloading_fragment()
+    with tab_debug:
+        _render_debug_fragment()
+    with tab_plc:
+        _render_plc_fragment()
 
 
 if __name__ == "__main__":
