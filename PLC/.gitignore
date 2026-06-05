@@ -1,5 +1,6 @@
-# Keep only project definition and Modbus maps in this folder
+# Keep only project definition, Modbus maps, and MQTT code in this folder
 *
 !.gitignore
 !*.project
 !*.csv
+!*.iecst
