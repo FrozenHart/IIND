@@ -2,9 +2,10 @@ import math
 
 from mes_recipe_engine import RecipeEngine
 
+SECONDS_PER_DAY = 60
+
 TOOL_ROTATION_S = 25
 CONVEYOR_TRAVEL_CELL_S = 10
-SECONDS_PER_DAY = 60
 AVAILABLE_CELLS = 4
 CELLS_PER_PIECE = 5
 
@@ -31,15 +32,14 @@ def per_piece_material_cost(piece_type):
 
 def estimate_day_duration_seconds(orders):
     """
-    orders: list of (piece_type, qty) tuples scheduled for the same day.
-    Returns estimated wall-clock seconds to complete all orders for that day.
+    orders: list of (piece_type, qty) tuples.
+    Returns estimated wall-clock seconds to complete all of them together.
     """
     if not orders:
         return 0
 
     total_transform = 0
     total_assembly = 0
-    total_changeover = 0
     total_conveyor = 0
     unique_leg_tools = set()
 
@@ -50,13 +50,12 @@ def estimate_day_duration_seconds(orders):
         qty = int(qty)
         total_transform += (r["leg_time"] * 2 + r["top_time"]) * qty
         total_assembly += r["join_time"] * qty
-        total_changeover += 2 * TOOL_ROTATION_S
         total_conveyor += CELLS_PER_PIECE * CONVEYOR_TRAVEL_CELL_S * qty
         unique_leg_tools.add(r["leg_tool"])
 
     eff_parallel = min(AVAILABLE_CELLS, len(unique_leg_tools) * 2)
 
-    phase1_s = (total_transform + total_changeover) / eff_parallel if eff_parallel else total_transform + total_changeover
+    phase1_s = (total_transform + 2 * TOOL_ROTATION_S) / eff_parallel if eff_parallel else total_transform + 2 * TOOL_ROTATION_S
     phase2_s = total_assembly / min(AVAILABLE_CELLS, max(eff_parallel, 1))
     conveyor_s = total_conveyor / max(eff_parallel, 1)
 
@@ -64,17 +63,17 @@ def estimate_day_duration_seconds(orders):
 
 
 def estimate_completion_day(piece_type, remaining_tables, current_day):
-    qty = int(remaining_tables)
-    seconds = estimate_day_duration_seconds([(piece_type, qty)])
-    days_needed = max(1, math.ceil(seconds / SECONDS_PER_DAY))
-    return current_day + days_needed
+    seconds = estimate_day_duration_seconds([(piece_type, remaining_tables)])
+    days = max(1, math.ceil(seconds / SECONDS_PER_DAY))
+    return current_day + days
 
 
 def estimate_order_completion(items, current_day):
-    orders = [(piece_type, int(remaining)) for piece_type, remaining in items]
-    seconds = estimate_day_duration_seconds(orders)
-    days_needed = max(1, math.ceil(seconds / SECONDS_PER_DAY))
-    return current_day + days_needed
+    if not items:
+        return current_day
+    seconds = estimate_day_duration_seconds(items)
+    days = max(1, math.ceil(seconds / SECONDS_PER_DAY))
+    return current_day + days
 
 
 # Machine capabilities based on the project documentation

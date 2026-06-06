@@ -84,6 +84,7 @@ def ensure_mes_schema():
         "tool_stats",
         "machine_piece_stats",
         "unloading_stats",
+        "loading_stats",
         "simulation_state",
     ]
 
@@ -332,6 +333,44 @@ def fetch_unloading_by_type():
     ]
 
 
+def fetch_loading_stats():
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT conveyor_id, piece_type, quantity_loaded
+            FROM loading_stats
+            ORDER BY conveyor_id, piece_type
+            """
+        )
+        rows = cur.fetchall()
+    return [
+        {"conveyor_id": row[0], "piece_type": row[1], "quantity_loaded": row[2]}
+        for row in rows
+    ]
+
+
+def fetch_output_stats():
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT dock_id, piece_type, quantity_unloaded
+            FROM unloading_stats
+            WHERE piece_type ~ '^\d+$' AND CAST(piece_type AS INTEGER) >= 9
+            ORDER BY dock_id, piece_type
+            """
+        )
+        rows = cur.fetchall()
+    return [
+        {"dock_id": row[0], "piece_type": row[1], "quantity_unloaded": row[2]}
+        for row in rows
+    ]
+
+
+DOCK_TO_OUTPUT_CONV = {2: "O2", 3: "O3", 4: "O4", 5: "O5"}
+
+
 def split_orders_by_status(overview):
     grouped = {
         "pending": [],
@@ -485,38 +524,55 @@ def render_machine_stats(machine_stats, machine_tool_stats, machine_piece_stats)
                     st.progress(min(1.0, piece_share))
 
 
-def render_unloading_stats(unloading_total, unloading_by_type):
-    st.subheader("Unloaded Work-Pieces")
-    st.caption("Requirement 4.3: totals by unloading dock and by piece type for each dock.")
+def render_conveyor_stats(loading_stats, output_stats):
+    st.subheader("Loading Conveyors (Lx)")
+    st.caption("Raw pieces entering the system.")
 
-    totals_by_dock = {as_int(row["dock_id"]): as_int(row["total_unloaded"]) for row in unloading_total}
-    by_type = defaultdict(list)
-    for row in unloading_by_type:
-        by_type[as_int(row["dock_id"])].append(
-            {
-                "piece_type": str(row["piece_type"]),
-                "quantity_unloaded": as_int(row["quantity_unloaded"]),
-            }
-        )
+    by_lx = {}
+    for row in loading_stats:
+        by_lx.setdefault(row["conveyor_id"], {})[row["piece_type"]] = row["quantity_loaded"]
 
-    dock_ids = sorted(set(totals_by_dock.keys()) | set(by_type.keys()) | {1, 2, 3, 4, 5})
-    columns = st.columns(3)
-    for index, dock_id in enumerate(dock_ids):
-        with columns[index % 3]:
+    lx_ids = sorted(by_lx.keys(), key=lambda x: int(x[1:]))
+    lx_cols = st.columns(min(3, len(lx_ids) or 1))
+    for i, conv in enumerate(lx_ids):
+        with lx_cols[i % 3]:
             with st.container(border=True):
-                total = totals_by_dock.get(dock_id, 0)
-                st.markdown(f"**Dock {dock_id}**")
-                st.metric("Total unloaded", total)
+                st.markdown(f"**{conv}**")
+                types = by_lx[conv]
+                total = sum(types.values())
+                st.metric("Total loaded", total)
+                denom = max(1, total)
+                for pt, qty in sorted(types.items(), key=lambda x: int(x[0])):
+                    st.write(f"{format_piece_type(pt)}: {qty}")
+                    st.progress(min(1.0, qty / float(denom)))
 
-                piece_rows = sorted(by_type.get(dock_id, []), key=lambda r: r["piece_type"])
-                if not piece_rows:
-                    st.caption("No unloaded pieces recorded yet.")
+    st.divider()
+    st.subheader("Output Conveyors (Ox)")
+    st.caption("Finished pieces shipped to the warehouse.")
+
+    by_ox = {}
+    for row in output_stats:
+        dock_id = as_int(row["dock_id"])
+        if dock_id in DOCK_TO_OUTPUT_CONV:
+            by_ox.setdefault(dock_id, {})[row["piece_type"]] = row["quantity_unloaded"]
+
+    dock_ids = sorted(set(by_ox.keys()) | {2, 3, 4, 5})
+    ox_cols = st.columns(min(3, len(dock_ids) or 1))
+    for i, dock_id in enumerate(dock_ids):
+        with ox_cols[i % 3]:
+            with st.container(border=True):
+                conv_label = DOCK_TO_OUTPUT_CONV.get(dock_id, f"O{dock_id}")
+                st.markdown(f"**{conv_label}**")
+                types = by_ox.get(dock_id, {})
+                total = sum(types.values())
+                st.metric("Total shipped", total)
+                if not types:
+                    st.caption("No pieces shipped yet.")
                 else:
-                    denominator = max(1, sum(r["quantity_unloaded"] for r in piece_rows))
-                    for row in piece_rows:
-                        qty = row["quantity_unloaded"]
-                        st.write(f"{format_piece_type(row['piece_type'])}: {qty}")
-                        st.progress(min(1.0, qty / float(denominator)))
+                    denom = max(1, total)
+                    for pt, qty in sorted(types.items(), key=lambda x: int(x[0])):
+                        st.write(f"{format_piece_type(pt)}: {qty}")
+                        st.progress(min(1.0, qty / float(denom)))
 
 
 def render_priority_status(priority_status):
@@ -558,6 +614,8 @@ def load_dashboard_snapshot():
         "machine_piece_stats": fetch_machine_piece_stats(),
         "unloading_total": fetch_unloading_total_by_dock(),
         "unloading_by_type": fetch_unloading_by_type(),
+        "loading_stats": fetch_loading_stats(),
+        "output_stats": fetch_output_stats(),
         "global_piece_mix": fetch_operated_pieces_by_type(overview),
     }
 
@@ -675,8 +733,8 @@ def render_machine_page(snapshot):
             st.progress(min(1.0, produced_total / float(total_mix)))
 
 
-def render_unloading_page(snapshot):
-    render_unloading_stats(snapshot["unloading_total"], snapshot["unloading_by_type"])
+def render_conveyor_page(snapshot):
+    render_conveyor_stats(snapshot["loading_stats"], snapshot["output_stats"])
 
 
 def render_debug_page(snapshot):
@@ -746,11 +804,11 @@ def _render_machines_fragment():
 
 
 @st.fragment(run_every=10)
-def _render_unloading_fragment():
+def _render_conveyor_fragment():
     try:
-        unloading_total = fetch_unloading_total_by_dock()
-        unloading_by_type = fetch_unloading_by_type()
-        render_unloading_stats(unloading_total, unloading_by_type)
+        loading_stats = fetch_loading_stats()
+        output_stats = fetch_output_stats()
+        render_conveyor_stats(loading_stats, output_stats)
     except Exception as exc:
         render_database_error(exc)
 
@@ -774,8 +832,8 @@ def main():
 
     _render_kpis_fragment()
 
-    tab_orders, tab_algorithm, tab_machines, tab_unloading, tab_debug = st.tabs(
-        ["Orders", "Algorithm", "Machine Statistics", "Unloading", "Raw Data"]
+    tab_orders, tab_algorithm, tab_machines, tab_conveyors, tab_debug = st.tabs(
+        ["Orders", "Algorithm", "Machine Statistics", "Conveyors", "Raw Data"]
     )
 
     with tab_orders:
@@ -784,8 +842,8 @@ def main():
         _render_algorithm_fragment()
     with tab_machines:
         _render_machines_fragment()
-    with tab_unloading:
-        _render_unloading_fragment()
+    with tab_conveyors:
+        _render_conveyor_fragment()
     with tab_debug:
         _render_debug_fragment()
 

@@ -1,4 +1,6 @@
 import math
+from collections import defaultdict
+
 import psycopg2
 
 DB_HOST = "localhost"
@@ -69,12 +71,14 @@ def advance_day():
 
 def _estimate_order_duration_seconds(items):
     """
-    items: list of (piece_type, qty) tuples for one order.
-    Returns estimated wall-clock seconds to complete all tables.
+    items: list of (piece_type, qty) tuples — all items sharing the same DDate.
+    Returns estimated wall-clock seconds to complete all of them together.
     """
+    if not items:
+        return 0
+
     total_transform = 0
     total_assembly = 0
-    total_changeover = 0
     total_conveyor = 0
     unique_leg_tools = set()
 
@@ -86,15 +90,12 @@ def _estimate_order_duration_seconds(items):
         qty = int(qty)
         total_transform += (r["leg_time"] * 2 + r["top_time"]) * qty
         total_assembly += r["join_time"] * qty
-        total_changeover += 2 * TOOL_ROTATION_S
         total_conveyor += CELLS_PER_PIECE * CONVEYOR_TRAVEL_CELL_S * qty
         unique_leg_tools.add(r["leg_tool"])
 
     eff_parallel = min(AVAILABLE_CELLS, len(unique_leg_tools) * 2)
-    if eff_parallel == 0:
-        eff_parallel = 1
 
-    phase1_s = (total_transform + total_changeover) / eff_parallel
+    phase1_s = (total_transform + 2 * TOOL_ROTATION_S) / eff_parallel
     phase2_s = total_assembly / min(AVAILABLE_CELLS, eff_parallel)
     conveyor_s = total_conveyor / eff_parallel
 
@@ -103,8 +104,8 @@ def _estimate_order_duration_seconds(items):
 def generate_mps():
     """
     Builds the Master Production Schedule from all pending orders.
-    Strategy: schedule production start so it finishes by DDate,
-    accounting for 3 days per batch of 10 tables.
+    Orders sharing the same DDate are stacked — their total work is
+    estimated as one batch, then all are assigned the same start day.
     Returns: dict of {production_day: [list of order dicts]}
     """
     conn = _get_db()
@@ -119,22 +120,26 @@ def generate_mps():
     cur.close()
     conn.close()
 
-    # Group rows by OrderID to get total tables per order
-    order_rows = {}
+    # Group ALL items by DDate — estimate each order independently, sum the seconds
+    ddate_groups = defaultdict(list)
     for row in rows:
-        order_rows.setdefault(row[0], []).append(row)
+        ddate_groups[row[1]].append(row)
 
-    order_days = {}
-    for order_id, group in order_rows.items():
-        ddate = group[0][1]
-        items = [(r[3], r[4]) for r in group]
-        seconds = _estimate_order_duration_seconds(items)
-        estimated_days = max(1, math.ceil(seconds / SECONDS_PER_DAY))
-        order_days[order_id] = max(1, ddate - estimated_days)
+    order_day = {}
+    for ddate, group in ddate_groups.items():
+        order_ids = {r[0] for r in group}
+        total_seconds = 0
+        for oid in order_ids:
+            order_items = [(r[3], r[4]) for r in group if r[0] == oid]
+            total_seconds += _estimate_order_duration_seconds(order_items)
+        estimated_days = max(1, math.ceil(total_seconds / SECONDS_PER_DAY))
+        start_day = max(1, ddate - estimated_days)
+        for row in group:
+            order_day[row[0]] = start_day
 
     mps = {}
     for order_id, ddate, penalty, piece_type, qty in rows:
-        production_day = order_days[order_id]
+        production_day = order_day[order_id]
         mps.setdefault(production_day, []).append({
             "OrderID":        order_id,
             "Piece":          piece_type,
