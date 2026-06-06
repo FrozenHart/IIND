@@ -3,7 +3,7 @@
   "NIF": 678912345,
   "OrderID": 3001,
   "orders": [
-    { "type": "RWW", "quantity": 5, "DDate": 3, "Penalty": 10.0 },
-    { "type": "SMM", "quantity": 3, "DDate": 3, "Penalty": 10.0 }
+    { "type": "RWW", "quantity": 5, "DDate": 1, "Penalty": 10.0 },
+    { "type": "SMM", "quantity": 3, "DDate": 1, "Penalty": 10.0 }
   ]
 }

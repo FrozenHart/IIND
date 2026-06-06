@@ -8,11 +8,10 @@ logger = setup_logger("MES")
 
 from mes_recipe_engine import RecipeEngine
 from plc_client import close_client
-from mes_scheduler import MACHINE_TOOLS, TOOL_TO_SLOT, ASSEMBLY_MACHINES, estimate_order_completion
+from mes_scheduler import MACHINE_TOOLS, TOOL_TO_SLOT, ASSEMBLY_MACHINES, estimate_order_completion, per_piece_material_cost
 from plc_client import (
     MACHINE_TO_INPUT,
     MACHINE_TO_CONVEYOR,
-    read_unloading_snapshot,
     send_to_plc,
     send_machine_command,
     confirm_machine_command,
@@ -96,7 +95,7 @@ class MESService:
     def __init__(self):
         self.recipe_engine = RecipeEngine()
         self._last_tool_by_machine = {}
-        self._last_unload_state = {f"U{i}": False for i in range(1, 11)}
+
         self._schema_ready = False
         self._schema_error_logged = False
         self._no_open_items_logged = False
@@ -116,6 +115,12 @@ class MESService:
         self._output_conv_shipped = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
         self._output_conv_total = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
         self._order_to_conv = {}
+        self._o_locks = {2: asyncio.Lock(), 3: asyncio.Lock(), 4: asyncio.Lock(), 5: asyncio.Lock()}
+        self._claim_lock = asyncio.Lock()
+        self._shipping_items = set()
+        self._pending_order_count = {}
+        self._pending_transform = {}
+        self._w2_to_w1_pending = {}
 
     def _conn(self):
         return psycopg2.connect(
@@ -243,10 +248,10 @@ class MESService:
                 JOIN orders o ON o.orderid = po.orderid
                 WHERE po.quantity_produced < po.quantity_ordered
                   AND po.status IN ('Pending', 'In Progress')
-                  AND COALESCE(po.production_day, 1) <= %s
+                  AND (COALESCE(po.production_day, 1) <= %s OR o.ddate < %s)
                 ORDER BY po.id ASC
                 """,
-                (int(current_day),),
+                (int(current_day), int(current_day)),
             )
             rows = cur.fetchall()
             return [
@@ -262,6 +267,7 @@ class MESService:
                     "penalty": float(row[8]) if row[8] is not None else 0.0,
                 }
                 for row in rows
+                if row[0] not in self._shipping_items and row[1] not in self._pending_order_count
             ]
 
     def count_future_open_items(self, current_day):
@@ -313,6 +319,55 @@ class MESService:
                     ELSE 'Pending'
                 END
                 """
+            )
+            conn.commit()
+
+    def update_erp_order_item(self, order_id, piece_type):
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE Order_Items SET Quantity_Done = Quantity_Done + 1 "
+                "WHERE OrderID = %s AND Piece_Type = %s",
+                (order_id, str(piece_type).upper()),
+            )
+            conn.commit()
+
+    def insert_production_feedback(self, order_id, piece_type):
+        cost = per_piece_material_cost(piece_type)
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO Production_Feedback (OrderID, Pieces_Produced, Production_Cost) "
+                "VALUES (%s, 1, %s)",
+                (order_id, cost),
+            )
+            conn.commit()
+
+    def finalize_erp_order_if_complete(self, order_id, current_day):
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM Order_Items WHERE OrderID = %s AND Quantity_Done < Quantity_Ordered",
+                (order_id,),
+            )
+            incomplete = cur.fetchone()[0]
+            if incomplete > 0:
+                return
+            cur.execute(
+                "SELECT DDate, Penalty_Per_Day FROM Orders WHERE OrderID = %s",
+                (order_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return
+            ddate, penalty_per_day = row
+            overdue = max(0, int(current_day) - int(ddate))
+            penalty = overdue * float(penalty_per_day)
+            cur.execute(
+                "UPDATE Orders SET Total_Cost = COALESCE(Total_Cost, 0) + %s, "
+                "Status = 'Completed', Estimated_Completion_Day = %s "
+                "WHERE OrderID = %s",
+                (penalty, int(current_day), order_id),
             )
             conn.commit()
 
@@ -388,9 +443,9 @@ class MESService:
                 )
             conn.commit()
 
-    def _record_machine_tool_stats(self, machine_id, tool_id, operations_count, piece_type):
+    def _record_machine_tool_stats(self, machine_id, tool_id, piece_type, duration_s=None):
         self._ensure_machine_row(machine_id)
-        operating_seconds = TOOL_SECONDS.get(tool_id, 10) * int(operations_count)
+        operating_seconds = duration_s if duration_s and duration_s > 0 else TOOL_SECONDS.get(tool_id, 10)
 
         with self._conn() as conn:
             cur = conn.cursor()
@@ -398,10 +453,10 @@ class MESService:
                 """
                 UPDATE machine_stats
                 SET total_operating_sec = total_operating_sec + %s,
-                    pieces_processed = pieces_processed + %s
+                    pieces_processed = pieces_processed + 1
                 WHERE machine_id = %s
                 """,
-                (operating_seconds, int(operations_count), machine_id),
+                (operating_seconds, machine_id),
             )
             conn.commit()
 
@@ -443,7 +498,7 @@ class MESService:
                 )
             conn.commit()
 
-        self._record_machine_piece_stats(machine_id, piece_type, operations_count)
+        self._record_machine_piece_stats(machine_id, piece_type, 1)
 
     def _get_inventory(self, piece_type):
         return self._inventory.setdefault(piece_type, {"legs": 0, "tops": 0})
@@ -462,42 +517,47 @@ class MESService:
             if inv["tops"] >= 1:
                 inv["tops"] -= 1
 
-    def _record_unloading_stats(self, snapshot):
-        for u_key, values in snapshot.items():
-            requested = bool(values.get("requested", False))
-            material_id = int(values.get("material", 0))
-            previous = self._last_unload_state.get(u_key, False)
-            self._last_unload_state[u_key] = requested
+    def _record_mes_unloading(self, uk, material_id):
+        u_index = int(uk[1:])
+        dock_id = ((u_index - 1) % 5) + 1
+        piece_type = str(int(material_id))
 
-            # Count only rising edges to avoid double-counting while a signal stays true.
-            if not requested or previous:
-                continue
-            if material_id <= 0:
-                continue
-
-            u_index = int(u_key[1:])
-            dock_id = ((u_index - 1) % 5) + 1
-            piece_type = str(material_id)
-
-            with self._conn() as conn:
-                cur = conn.cursor()
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE unloading_stats
+                SET quantity_unloaded = quantity_unloaded + 1
+                WHERE dock_id = %s AND piece_type = %s
+                """,
+                (dock_id, piece_type),
+            )
+            if cur.rowcount == 0:
                 cur.execute(
                     """
-                    UPDATE unloading_stats
-                    SET quantity_unloaded = quantity_unloaded + 1
-                    WHERE dock_id = %s AND piece_type = %s
+                    INSERT INTO unloading_stats(dock_id, piece_type, quantity_unloaded)
+                    VALUES (%s, %s, 1)
                     """,
                     (dock_id, piece_type),
                 )
-                if cur.rowcount == 0:
-                    cur.execute(
-                        """
-                        INSERT INTO unloading_stats(dock_id, piece_type, quantity_unloaded)
-                        VALUES (%s, %s, 1)
-                        """,
-                        (dock_id, piece_type),
-                    )
-                conn.commit()
+            conn.commit()
+
+    def _record_mes_loading(self, conv_id, material_id):
+        piece_type = str(int(material_id))
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE Loading_Stats SET Quantity_Loaded = Quantity_Loaded + 1 "
+                "WHERE Conveyor_ID = %s AND Piece_Type = %s",
+                (conv_id, piece_type),
+            )
+            if cur.rowcount == 0:
+                cur.execute(
+                    "INSERT INTO Loading_Stats(Conveyor_ID, Piece_Type, Quantity_Loaded) "
+                    "VALUES (%s, %s, 1)",
+                    (conv_id, piece_type),
+                )
+            conn.commit()
 
     @staticmethod
     def _find_machine_for_tool(tool):
@@ -599,23 +659,22 @@ class MESService:
         async def _pulse_ship_final_with_confirm(unload_key, material_id, timeout_s=10.0, poll_s=0.25, max_retries=3):
             """Ship via U6-U10 and confirm W2 decremented before completing the order.
             Retries the pulse up to max_retries times if W2 doesn't decrement."""
-            before = await read_warehouse_counts()
-            if before is None:
-                await asyncio.sleep(2.5)
-                return True
-
             for attempt in range(1, max_retries + 1):
+                before = await read_warehouse_counts()
+                if before is None:
+                    await asyncio.sleep(2.5)
+                    continue
+
                 before_w2 = before[1]
                 ok = await pulse_unload_request(unload_key, material_id)
                 if not ok:
+                    logger.info(
+                        f"[MES] {unload_key} pulse attempt {attempt}/{max_retries} "
+                        f"for type={material_id}: pulse failed, retrying..."
+                    )
                     if attempt < max_retries:
                         await asyncio.sleep(1.0)
-                        before = await read_warehouse_counts()
-                        if before is None:
-                            await asyncio.sleep(2.5)
-                            return True
-                        continue
-                    return False
+                    continue
 
                 start = asyncio.get_event_loop().time()
                 while (asyncio.get_event_loop().time() - start) < timeout_s:
@@ -634,10 +693,6 @@ class MESService:
                 )
                 if attempt < max_retries:
                     await asyncio.sleep(2.0)
-                    before = await read_warehouse_counts()
-                    if before is None:
-                        await asyncio.sleep(2.5)
-                        return True
 
             logger.info(f"[MES] {unload_key} failed after {max_retries} attempts for type={material_id}.")
             return False
@@ -868,6 +923,22 @@ class MESService:
                     return w2_count
             return start_w2
 
+        async def _wait_for_w2_type_present(target_type, timeout_s=10.0, poll_s=0.2):
+            start = asyncio.get_event_loop().time()
+            while (asyncio.get_event_loop().time() - start) < timeout_s:
+                await asyncio.sleep(poll_s)
+                snap = await read_warehouse_snapshot()
+                if snap is None:
+                    continue
+                _, w2_count, _, bottom_values = snap
+                count = sum(
+                    1 for idx in range(min(w2_count, len(bottom_values)))
+                    if _extract_type_id(bottom_values[idx]) == target_type
+                )
+                if count > 0:
+                    return True
+            return False
+
         def _est_inventory():
             return {
                 "legs": self._est_w1["legs"] + self._est_w2["legs"],
@@ -877,12 +948,19 @@ class MESService:
         def _piece_inventory(snapshot):
             if snapshot is None:
                 return {"legs": {}, "tops": {}}
-            w1_count, _, top_values, _ = snapshot
+            w1_count, w2_count, top_values, bottom_values = snapshot
             leg_counts = {}
             top_counts = {}
             limit = min(w1_count, len(top_values))
             for idx in range(limit):
                 type_id = _extract_type_id(top_values[idx])
+                if type_id in (5, 8):
+                    leg_counts[type_id] = leg_counts.get(type_id, 0) + 1
+                elif type_id in (3, 4, 6, 7):
+                    top_counts[type_id] = top_counts.get(type_id, 0) + 1
+            limit = min(w2_count, len(bottom_values))
+            for idx in range(limit):
+                type_id = _extract_type_id(bottom_values[idx])
                 if type_id in (5, 8):
                     leg_counts[type_id] = leg_counts.get(type_id, 0) + 1
                 elif type_id in (3, 4, 6, 7):
@@ -902,13 +980,27 @@ class MESService:
                 penalty_val = 0.0
             return (due_val, -penalty_val, item.get("id", 0))
 
+        def _combined_inventory(snapshot):
+            counts = _piece_inventory(snapshot)
+            for tid, cnt in self._pending_transform.items():
+                if tid in (5, 8):
+                    counts["legs"][tid] = counts["legs"].get(tid, 0) + cnt
+                elif tid in (3, 4, 6, 7):
+                    counts["tops"][tid] = counts["tops"].get(tid, 0) + cnt
+            for tid, cnt in self._w2_to_w1_pending.items():
+                if tid in (5, 8):
+                    counts["legs"][tid] = counts["legs"].get(tid, 0) + cnt
+                elif tid in (3, 4, 6, 7):
+                    counts["tops"][tid] = counts["tops"].get(tid, 0) + cnt
+            return counts
+
         def _choose_assembly_item(items, snapshot):
             """Return all items with enough W1 inventory for assembly, in priority order,
             deducting inventory along the way so later items don't double-count pieces."""
             if not items:
                 return []
             
-            counts = _piece_inventory(snapshot)
+            counts = _combined_inventory(snapshot)
             ready = []
             for item in items:
                 piece_type = str(item.get("piece_type", "")).upper()
@@ -920,9 +1012,9 @@ class MESService:
                 if counts["legs"].get(leg_id, 0) >= 2 and counts["tops"].get(top_id, 0) >= 1:
                     ready.append(item)
             if not ready:
-                return None
+                return []
             ready.sort(key=_assembly_priority)
-            return ready[0]
+            return ready
 
         def _log_snapshot(values, max_items, label):
             limit = min(max_items, len(values))
@@ -976,12 +1068,12 @@ class MESService:
         slots_free = max(0, 10 - slots_used)
 
         # Step 1: Pick as many assembly-ready items as W1 inventory allows
-        assembly_item = _choose_assembly_item(open_items, snapshot)
+        assembly_items = _choose_assembly_item(open_items, snapshot)
         selected_orders = []
         remaining_slots = slots_free
-        if assembly_item:
-            need = int(assembly_item["quantity_ordered"]) - int(assembly_item["quantity_completed"])
-            selected_orders.append((assembly_item, need))
+        for item in assembly_items:
+            need = int(item["quantity_ordered"]) - int(item["quantity_completed"])
+            selected_orders.append((item, need))
 
 
         # Step 2: Fill remaining pipeline slots with transform orders by priority
@@ -1007,6 +1099,34 @@ class MESService:
             f"(slots_free={slots_free}): "
             + ", ".join(f"order {s[0]['order_id']}(need={int(s[0]['quantity_ordered'])-int(s[0]['quantity_completed'])},alloc={s[1]})" for s in selected_orders)
         )
+
+        first_item = selected_orders[0][0]
+        raw_remaining = max(0, int(first_item["quantity_ordered"]) - int(first_item["quantity_completed"]))
+        assemblable_legs = (
+            self._est_w1.get("legs", 0) +
+            self._est_w2.get("legs", 0) +
+            self._pending_transform.get(5, 0) +
+            self._pending_transform.get(8, 0) +
+            self._w2_to_w1_pending.get(5, 0) +
+            self._w2_to_w1_pending.get(8, 0)
+        )
+        assemblable_tops = (
+            self._est_w1.get("tops", 0) +
+            self._est_w2.get("tops", 0) +
+            self._pending_transform.get(3, 0) +
+            self._pending_transform.get(4, 0) +
+            self._pending_transform.get(6, 0) +
+            self._pending_transform.get(7, 0) +
+            self._w2_to_w1_pending.get(3, 0) +
+            self._w2_to_w1_pending.get(4, 0) +
+            self._w2_to_w1_pending.get(6, 0) +
+            self._w2_to_w1_pending.get(7, 0)
+        )
+        assemblable = min(assemblable_legs // 2, assemblable_tops)
+        true_remaining = max(0, raw_remaining - assemblable)
+        if raw_remaining > 0:
+            true_remaining = max(1, true_remaining)
+        selected_orders = [(item, min(share, true_remaining)) for item, share in selected_orders]
 
         all_transform_ops = []
         all_assemble_ops = []
@@ -1034,7 +1154,7 @@ class MESService:
         transform_ops = all_transform_ops
         assemble_ops = all_assemble_ops
 
-        remaining_final = max(0, int(first_item["quantity_ordered"]) - int(first_item["quantity_completed"]))
+        remaining_final = max(0, true_remaining)
         required_legs = remaining_final * 2
         required_tops = remaining_final
         logger.info(
@@ -1110,6 +1230,7 @@ class MESService:
                     )
                     return
                 logger.info(f"[MES]   Raw type={raw_type_id} confirmed on {loading_conv}.")
+                self._record_mes_loading(loading_conv, raw_type_id)
 
         # ---- Phase 2: Dispatch all ops to free cells in parallel ----
         all_ops = []
@@ -1124,6 +1245,34 @@ class MESService:
                 f"({len(transform_ops)} transform, {len(assemble_ops)} assemble) "
                 f"across available cells (waiting when busy)."
             )
+
+            async def _transfer_to_w1_bg(target_id):
+                try:
+                    async with self._u1_lock:
+                        w2_arrived = await _wait_for_w2_type_present(target_id)
+                        if not w2_arrived:
+                            logger.error(f"[MES] Piece type={target_id} never reached W2 after transform (bg).")
+                            return
+                        u1_ok = await pulse_unload_request("U1", target_id)
+                        if not u1_ok:
+                            return
+                        self._record_mes_unloading("U1", target_id)
+                        tid = int(target_id)
+                        self._w2_to_w1_pending[tid] = self._w2_to_w1_pending.get(tid, 0) + 1
+                        w1_arrived = await _wait_for_w1_type_increment(target_id)
+                        if not w1_arrived:
+                            logger.error(f"[MES] Piece type={target_id} never reached W1 after U1 transfer (bg).")
+                            return
+                        self._w2_to_w1_pending[tid] -= 1
+                        if self._w2_to_w1_pending[tid] <= 0:
+                            self._w2_to_w1_pending.pop(tid, None)
+                    if target_id in (5, 8):
+                        self._est_w1["legs"] += 1
+                    elif target_id in (3, 4, 6, 7):
+                        self._est_w1["tops"] += 1
+                    logger.info(f"[MES] Transferred type={target_id} to W1: est_w1 legs={self._est_w1['legs']} tops={self._est_w1['tops']}")
+                except Exception as exc:
+                    logger.error(f"[MES] Background U1 transfer for type={target_id} failed: {exc}")
 
             async def _run_one_op(op, machine):
                 uk = MACHINE_UNLOAD_MAP.get(machine)
@@ -1189,6 +1338,7 @@ class MESService:
                     if not unload_ok:
                         logger.info(f"[MES] Cell {uk}: unload pulse FAILED.")
                         return False
+                    self._record_mes_unloading(uk, raw_type_id)
 
                     loading_conv = UNLOAD_KEY_TO_LOADING_CONV.get(uk)
                     if not loading_conv:
@@ -1199,33 +1349,82 @@ class MESService:
                     if not arrived:
                         logger.info(f"[MES] Cell {uk}: target={op.target_id} NOT seen on {loading_conv}.")
                         return False
-
-                    # Immediately transfer legs/tops from W2 to W1 (cell stays busy during this)
-                    if op.target_id in (5, 8, 3, 4, 6, 7):
-                        w2_arrived = await _wait_for_w2_type_increment(int(op.target_id))
-                        if not w2_arrived:
-                            logger.error(f"[MES] Piece type={op.target_id} never reached W2 after transform.")
-                            return False
-                        async with self._u1_lock:
-                            u1_ok = await pulse_unload_request("U1", int(op.target_id))
-                            if not u1_ok:
-                                return False
-                            w1_arrived = await _wait_for_w1_type_increment(int(op.target_id))
-                            if not w1_arrived:
-                                logger.error(f"[MES] Piece type={op.target_id} never reached W1 after U1 transfer.")
-                                return False
-                        if op.target_id in (5, 8):
-                            self._est_w1["legs"] += 1
-                        elif op.target_id in (3, 4, 6, 7):
-                            self._est_w1["tops"] += 1
-                        logger.info(
-                            f"[MES] Transferred type={op.target_id} to W1: "
-                            f"est_w1 legs={self._est_w1['legs']} tops={self._est_w1['tops']}"
-                        )
-
-                    return True
+                    self._record_mes_loading(loading_conv, op.target_id)
+                    tid = int(op.target_id)
+                    self._pending_transform[tid] = self._pending_transform.get(tid, 0) - 1
+                    if self._pending_transform[tid] <= 0:
+                        self._pending_transform.pop(tid, None)
                 finally:
                     self._cell_busy[uk] = False
+
+                # Transfer piece from W2 to W1 in background — cell is already free for new ops
+                if op.target_id in (5, 8, 3, 4, 6, 7):
+                    asyncio.create_task(_transfer_to_w1_bg(int(op.target_id)))
+
+                return True
+
+            async def _ship_to_ox_bg(order_item, op):
+                try:
+                    target_id = int(op.target_id)
+                    order_id = order_item["order_id"]
+
+                    w2_ok = await _wait_for_w2_type_present(target_id)
+                    if not w2_ok:
+                        logger.error(f"[MES] Piece type={target_id} never reached W2 after assembly.")
+                        return
+                    await asyncio.sleep(0.5)
+
+                    conv_idx = self._order_to_conv.get(order_id)
+                    if conv_idx is None:
+                        async with self._claim_lock:
+                            conv_idx = self._order_to_conv.get(order_id)
+                            if conv_idx is not None:
+                                pass
+                            else:
+                                while True:
+                                    for idx in range(2, 6):
+                                        if self._output_conv_state[idx] == "free":
+                                            conv_idx = idx
+                                            break
+                                    if conv_idx is not None:
+                                        break
+                                    check_day = self._get_current_day()
+                                    if self._current_day is not None and check_day != self._current_day:
+                                        logger.info(f"[MES] Day changed: {self._current_day} → {check_day}. Flushing output conveyors...")
+                                        await self.flush_output_conveyors()
+                                        self._current_day = check_day
+                                    await asyncio.sleep(1.0)
+                                total_qty = self._get_order_total_quantity(order_id)
+                                self._order_to_conv[order_id] = conv_idx
+                                self._output_conv_state[conv_idx] = "occupied"
+                                self._output_conv_order[conv_idx] = order_id
+                                self._output_conv_shipped[conv_idx] = 0
+                                self._output_conv_total[conv_idx] = total_qty
+                                logger.info(f"[MES] Order {order_id}: claimed O{conv_idx}, total={total_qty}")
+
+                    async with self._o_locks[conv_idx]:
+                        u_lane = f"U{conv_idx + 5}"
+                        ship_ok = await _pulse_ship_final_with_confirm(u_lane, target_id)
+                        if not ship_ok:
+                            logger.info(f"[MES] Failed to ship final piece via {u_lane}.")
+                            return
+                        self._record_mes_unloading(u_lane, target_id)
+                        self._output_conv_shipped[conv_idx] += 1
+                        logger.info(f"[MES] Order {order_id}: shipped {self._output_conv_shipped[conv_idx]}/{self._output_conv_total[conv_idx]} to O{conv_idx}")
+                        self._est_w2["final"] += 1
+
+                        self.update_item_completion(order_item["id"], produced_count=1)
+                        self._apply_inventory_delta(order_item["piece_type"], op)
+                        self.update_erp_order_item(order_id, order_item["piece_type"])
+                        self.insert_production_feedback(order_id, order_item["piece_type"])
+                        self.finalize_erp_order_if_complete(order_id, self._get_current_day())
+                except Exception as exc:
+                    logger.error(f"[MES] Background shipping for order {order_item['order_id']} type={op.target_id} failed: {exc}")
+                finally:
+                    self._shipping_items.discard(order_item["id"])
+                    self._pending_order_count[order_id] = self._pending_order_count.get(order_id, 0) - 1
+                    if self._pending_order_count[order_id] <= 0:
+                        self._pending_order_count.pop(order_id, None)
 
             async def _run_assemble_op(op, order_item, machine):
                 """Run full assembly in a free cell. Returns True on success, False otherwise."""
@@ -1336,6 +1535,7 @@ class MESService:
                         if not ok:
                             logger.info(f"[MES]   {step['action']} unload FAILED.")
                             return False
+                        self._record_mes_unloading(uk, material_id)
 
                         if material_id in (5, 8):
                             self._est_w1["legs"] = max(0, self._est_w1["legs"] - 1)
@@ -1358,48 +1558,13 @@ class MESService:
                                 logger.info(f"[MES]   Final piece {op.target_id} NOT seen on {loading_conv} after assembly.")
                                 return False
                             logger.info(f"[MES]   Final piece {op.target_id} ARRIVED on {loading_conv} (step 3/3).")
-
-                            # Wait for piece to leave Lx and enter W2 before shipping
-                            w2_before = (await read_warehouse_counts())[1]
-                            if w2_before is None:
-                                w2_before = 0
-                            w2_after = await _wait_for_w2_increment(w2_before, timeout_s=30.0)
-                            if w2_after <= w2_before:
-                                logger.info(f"[MES] Piece {op.target_id} did not enter W2 after assembly on {uk}.")
-                                return False
                 finally:
                     self._cell_busy[uk] = False
 
-                # Phase C: Ship via assigned output conveyor
+                self._shipping_items.add(order_item["id"])
                 order_id = order_item["order_id"]
-                conv_idx = self._order_to_conv.get(order_id)
-                if conv_idx is None:
-                    for idx in range(2, 6):
-                        if self._output_conv_state[idx] == "free":
-                            conv_idx = idx
-                            break
-                    if conv_idx is None:
-                        logger.info(f"[MES] Order {order_id}: no free O conveyor, shipping deferred.")
-                        return False
-                    total_qty = self._get_order_total_quantity(order_id)
-                    self._order_to_conv[order_id] = conv_idx
-                    self._output_conv_state[conv_idx] = "occupied"
-                    self._output_conv_order[conv_idx] = order_id
-                    self._output_conv_shipped[conv_idx] = 0
-                    self._output_conv_total[conv_idx] = total_qty
-                    logger.info(f"[MES] Order {order_id}: claimed O{conv_idx}, total={total_qty}")
-
-                u_lane = f"U{conv_idx + 5}"
-                ship_ok = await _pulse_ship_final_with_confirm(u_lane, int(op.target_id))
-                if not ship_ok:
-                    logger.info(f"[MES] Failed to ship final piece via {u_lane}.")
-                    return False
-                self._output_conv_shipped[conv_idx] += 1
-                logger.info(f"[MES] Order {order_id}: shipped {self._output_conv_shipped[conv_idx]}/{self._output_conv_total[conv_idx]} to O{conv_idx}")
-                self._est_w2["final"] += 1
-
-                self.update_item_completion(order_item["id"], produced_count=1)
-                self._apply_inventory_delta(order_item["piece_type"], op)
+                self._pending_order_count[order_id] = self._pending_order_count.get(order_id, 0) + 1
+                asyncio.create_task(_ship_to_ox_bg(order_item, op))
                 return True
 
             pending_ops = list(all_ops)
@@ -1419,6 +1584,8 @@ class MESService:
                             uk = MACHINE_UNLOAD_MAP.get(machine)
                             if uk and uk not in active and not self._cell_busy.get(uk, False):
                                 task = asyncio.create_task(_run_one_op(op, machine))
+                                tid = int(op.target_id)
+                                self._pending_transform[tid] = self._pending_transform.get(tid, 0) + 1
                                 active[uk] = (task, item, machine)
                                 pending_ops.remove(item)
                                 assigned = True
@@ -1487,11 +1654,11 @@ class MESService:
 
                             if isinstance(result, Exception):
                                 logger.info(f"[MES] Cell {uk}: exception ({result}).")
-                                if op_type == "TRANSFORM":
+                                if op_type in ("TRANSFORM", "ASSEMBLE"):
                                     pending_ops.append(item)
                             elif not result:
                                 logger.info(f"[MES] Cell {uk}: operation failed.")
-                                if op_type == "TRANSFORM":
+                                if op_type in ("TRANSFORM", "ASSEMBLE"):
                                     pending_ops.append(item)
                             else:
                                 logger.info(f"[MES] Cell {uk}: operation completed.")
@@ -1502,18 +1669,20 @@ class MESService:
                             del active[uk]
                             break
 
+                    check_day = self._get_current_day()
+                    if self._current_day is not None and check_day != self._current_day:
+                        logger.info(f"[MES] Day changed: {self._current_day} → {check_day}. Flushing output conveyors...")
+                        await self.flush_output_conveyors()
+                        self._current_day = check_day
+
             # Record stats
             for op, machine in completed_transforms:
-                self._record_machine_tool_stats(machine, op.tool, 1, op.piece_type)
+                self._record_machine_tool_stats(machine, op.tool, op.piece_type, duration_s=op.duration_s)
             for item in completed_assemblies:
                 op, _, _ = item
                 machine = self._find_machine_for_tool(op.tool)
                 if machine:
-                    self._record_machine_tool_stats(machine, op.tool, 1, op.piece_type)
-
-            unload_snapshot = await read_unloading_snapshot()
-            if unload_snapshot:
-                self._record_unloading_stats(unload_snapshot)
+                    self._record_machine_tool_stats(machine, op.tool, op.piece_type, duration_s=op.duration_s)
 
         self.sync_order_status()
         self._update_estimated_completion_days()

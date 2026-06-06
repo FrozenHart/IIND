@@ -7,13 +7,13 @@
       {
         "type": "RWW",
         "quantity": 2,
-        "DDate": 3,
-        "Penalty": 1.5
+      "DDate": 4,
+      "Penalty": 1.5
       },
       {
         "type": "SMM",
         "quantity": 2,
-        "DDate": 3,
+        "DDate": 4,
         "Penalty": 2.0
       }
     ]

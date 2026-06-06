@@ -4,7 +4,7 @@
     "NIF": 789123456,
     "OrderID": 4001,
     "orders": [
-      { "type": "RWM", "quantity": 10, "DDate": 3, "Penalty": 1.0 }
+      { "type": "RWM", "quantity": 10, "DDate": 11, "Penalty": 1.0 }
     ]
   },
   {
@@ -12,8 +12,8 @@
     "NIF": 891234567,
     "OrderID": 4002,
     "orders": [
-      { "type": "SWW", "quantity": 6, "DDate": 5, "Penalty": 3.5 },
-      { "type": "RMM", "quantity": 4, "DDate": 5, "Penalty": 3.5 }
+    { "type": "SWW", "quantity": 6, "DDate": 6, "Penalty": 3.5 },
+    { "type": "RMM", "quantity": 4, "DDate": 6, "Penalty": 3.5 }
     ]
   },
   {
@@ -21,7 +21,7 @@
     "NIF": 912345678,
     "OrderID": 4003,
     "orders": [
-      { "type": "SMM", "quantity": 8, "DDate": 3, "Penalty": 8.0 }
+      { "type": "SMM", "quantity": 8, "DDate": 9, "Penalty": 8.0 }
     ]
   }
 ]

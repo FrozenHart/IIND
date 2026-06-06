@@ -108,6 +108,17 @@ CREATE TABLE
         Quantity_Unloaded INT DEFAULT 0
     );
 
+CREATE TABLE
+    IF NOT EXISTS Loading_Stats (
+        ID SERIAL PRIMARY KEY,
+        Conveyor_ID VARCHAR(10) NOT NULL,
+        Piece_Type VARCHAR(10) NOT NULL,
+        Quantity_Loaded INT DEFAULT 0,
+        UNIQUE (Conveyor_ID, Piece_Type)
+    );
+
+CREATE INDEX IF NOT EXISTS idx_order_items_orderid ON Order_Items(OrderID);
+
 GRANT USAGE, CREATE ON SCHEMA public TO iind_user;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO iind_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO iind_user;

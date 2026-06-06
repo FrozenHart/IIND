@@ -1,34 +1,79 @@
 import math
 
-# Observed average: 3 simulation days per table, up to 10 tables concurrently
-DAYS_PER_TABLE = 3
-MAX_CONCURRENT_TABLES = 10
+from mes_recipe_engine import RecipeEngine
+
+SECONDS_PER_DAY = 60
+
+TOOL_ROTATION_S = 25
+CONVEYOR_TRAVEL_CELL_S = 10
+AVAILABLE_CELLS = 4
+CELLS_PER_PIECE = 5
+
+RECIPE_ENGINE = RecipeEngine()
+FINAL_RECIPES = RECIPE_ENGINE.FINAL_RECIPES
+
+BOM_COST = {
+    "RWW": {"Wood": 3, "Metal": 0},
+    "SWW": {"Wood": 3, "Metal": 0},
+    "RWM": {"Wood": 1, "Metal": 2},
+    "SWM": {"Wood": 1, "Metal": 2},
+    "RMM": {"Wood": 0, "Metal": 3},
+    "SMM": {"Wood": 0, "Metal": 3},
+}
+
+WOOD_PRICE = 2
+METAL_PRICE = 4
+
+
+def per_piece_material_cost(piece_type):
+    bom = BOM_COST.get(str(piece_type).upper(), {})
+    return bom.get("Wood", 0) * WOOD_PRICE + bom.get("Metal", 0) * METAL_PRICE
+
+
+def estimate_day_duration_seconds(orders):
+    """
+    orders: list of (piece_type, qty) tuples.
+    Returns estimated wall-clock seconds to complete all of them together.
+    """
+    if not orders:
+        return 0
+
+    total_transform = 0
+    total_assembly = 0
+    total_conveyor = 0
+    unique_leg_tools = set()
+
+    for piece_type, qty in orders:
+        r = FINAL_RECIPES.get(str(piece_type).upper())
+        if not r:
+            continue
+        qty = int(qty)
+        total_transform += (r["leg_time"] * 2 + r["top_time"]) * qty
+        total_assembly += r["join_time"] * qty
+        total_conveyor += CELLS_PER_PIECE * CONVEYOR_TRAVEL_CELL_S * qty
+        unique_leg_tools.add(r["leg_tool"])
+
+    eff_parallel = min(AVAILABLE_CELLS, len(unique_leg_tools) * 2)
+
+    phase1_s = (total_transform + 2 * TOOL_ROTATION_S) / eff_parallel if eff_parallel else total_transform + 2 * TOOL_ROTATION_S
+    phase2_s = total_assembly / min(AVAILABLE_CELLS, max(eff_parallel, 1))
+    conveyor_s = total_conveyor / max(eff_parallel, 1)
+
+    return max(phase1_s, phase2_s) + conveyor_s
 
 
 def estimate_completion_day(piece_type, remaining_tables, current_day):
-    """Estimate the simulation day when the remaining tables finish.
-
-    Based on observed average: 3 days per table, up to 10 concurrent.
-    """
-    if remaining_tables <= 0:
-        return current_day
-    batches = math.ceil(remaining_tables / MAX_CONCURRENT_TABLES)
-    days_needed = batches * DAYS_PER_TABLE
-    return current_day + days_needed
+    seconds = estimate_day_duration_seconds([(piece_type, remaining_tables)])
+    days = max(1, math.ceil(seconds / SECONDS_PER_DAY))
+    return current_day + days
 
 
 def estimate_order_completion(items, current_day):
-    """Estimate completion day for an order with multiple recipe types.
-
-    `items` — list of (piece_type, remaining_tables).
-    Based on observed average: 3 days per table, up to 10 concurrent.
-    """
-    total_tables = sum(int(remaining) for _, remaining in items)
-    if total_tables == 0:
+    if not items:
         return current_day
-    batches = math.ceil(total_tables / MAX_CONCURRENT_TABLES)
-    days_needed = batches * DAYS_PER_TABLE
-    return current_day + days_needed
+    seconds = estimate_day_duration_seconds(items)
+    days = max(1, math.ceil(seconds / SECONDS_PER_DAY))
+    return current_day + days
 
 
 # Machine capabilities based on the project documentation
