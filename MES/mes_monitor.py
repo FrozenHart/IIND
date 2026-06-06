@@ -1,58 +1,9 @@
-import asyncio
 from collections import defaultdict
 
-import pandas as pd
 import psycopg2
 import streamlit as st
 
 from mes_scheduler import MACHINE_TOOLS
-from plc_client import read_warehouse_snapshot, read_conveyor_state
-
-CELL_LAYOUT = {
-    "Cell 1": {"lane": "U2", "conveyors": ["C6", "C8", "C10"]},
-    "Cell 2": {"lane": "U3", "conveyors": ["C11", "C13", "C15"]},
-    "Cell 3": {"lane": "U4", "conveyors": ["C16", "C18", "C20"]},
-    "Cell 4": {"lane": "U5", "conveyors": ["C21", "C23", "C25"]},
-}
-
-TYPE_LABELS = {
-    1: "Raw Wood", 2: "Raw Metal", 3: "R_top_W", 4: "S_top_W",
-    5: "Leg_W", 6: "R_top_M", 7: "S_top_M", 8: "Leg_M",
-    9: "RWW", 10: "SWW", 11: "RWM", 12: "SWM", 13: "RMM", 14: "SMM",
-}
-
-def _extract_type_id(piece):
-    if piece is None:
-        return 0
-    type_id = getattr(piece, "Type_ID", None)
-    if type_id is not None:
-        try:
-            return int(type_id)
-        except Exception:
-            return 0
-    if isinstance(piece, dict):
-        try:
-            return int(piece.get("Type_ID", 0))
-        except Exception:
-            return 0
-    if isinstance(piece, (list, tuple)) and piece:
-        try:
-            return int(piece[0])
-        except Exception:
-            return 0
-    body = getattr(piece, "Body", None)
-    if isinstance(body, (bytes, bytearray)) and body:
-        le = int.from_bytes(body[:2], "little") if len(body) >= 2 else int(body[0])
-        return le
-    piece_dict = getattr(piece, "__dict__", None)
-    if piece_dict:
-        try:
-            tid = piece_dict.get("Type_ID") or piece_dict.get("TypeId")
-            if tid is not None:
-                return int(tid)
-        except Exception:
-            return 0
-    return 0
 
 DB_HOST = "localhost"
 DB_PORT = "5000"
@@ -744,87 +695,6 @@ def render_debug_page(snapshot):
     st.dataframe(snapshot["unloading_by_type"], width="stretch", hide_index=True)
 
 
-def render_plc_debug_page():
-    st.subheader("🔍 Live PLC Debug")
-
-    snap = asyncio.run(read_warehouse_snapshot())
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        st.markdown("**📦 W1 (Top)**")
-        if snap is not None:
-            w1c, _, top_vals, _ = snap
-            st.caption(f"Count: **{w1c}**")
-            rows = []
-            for i in range(min(w1c, len(top_vals))):
-                tid = _extract_type_id(top_vals[i])
-                rows.append({"Slot": i, "Type_ID": tid, "Label": TYPE_LABELS.get(tid, f"?{tid}")})
-            if rows:
-                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-            else:
-                st.info("Empty")
-        else:
-            st.error("Cannot connect to PLC")
-
-    with col_b:
-        st.markdown("**📦 W2 (Bottom)**")
-        if snap is not None:
-            _, w2c, _, bot_vals = snap
-            st.caption(f"Count: **{w2c}**")
-            rows = []
-            for i in range(min(w2c, len(bot_vals))):
-                tid = _extract_type_id(bot_vals[i])
-                rows.append({"Slot": i, "Type_ID": tid, "Label": TYPE_LABELS.get(tid, f"?{tid}")})
-            if rows:
-                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-            else:
-                st.info("Empty")
-        else:
-            st.error("Cannot connect to PLC")
-
-    st.divider()
-    st.markdown("**🏭 Cell Status**")
-
-    async def _read_all_conveyors():
-        convs = {}
-        for info in CELL_LAYOUT.values():
-            for cid in info["conveyors"]:
-                convs[cid] = await read_conveyor_state(cid)
-        return convs
-
-    conv_states = asyncio.run(_read_all_conveyors())
-
-    cell_rows = []
-    for cell_name, info in CELL_LAYOUT.items():
-        conveyors = info["conveyors"]
-        busy = any(
-            conv_states.get(c) is not None and conv_states[c]["action_type"] != 0
-            for c in conveyors
-        )
-        status = "🔴 BUSY" if busy else "🟢 FREE"
-        details = []
-        for c in conveyors:
-            s = conv_states.get(c)
-            if s is None:
-                details.append(f"{c}: ❓")
-            elif s["action_type"] == 0 and s["free"]:
-                details.append(f"{c}: free")
-            else:
-                act_name = ["pass", "transform", "swallow", "assemble"]
-                a = act_name[s["action_type"]] if s["action_type"] < 4 else f"?{s['action_type']}"
-                details.append(f"{c}: {a}")
-        cell_rows.append({
-            "Cell": cell_name,
-            "Lane": info["lane"],
-            "Conveyors": " ".join(conveyors),
-            "Status": status,
-            "Details": ", ".join(details),
-        })
-
-    st.dataframe(pd.DataFrame(cell_rows), width="stretch", hide_index=True)
-
-
 @st.fragment(run_every=5)
 def _render_kpis_fragment():
     try:
@@ -894,11 +764,6 @@ def _render_debug_fragment():
         render_database_error(exc)
 
 
-@st.fragment(run_every=5)
-def _render_plc_fragment():
-    render_plc_debug_page()
-
-
 def main():
     st.set_page_config(page_title="MES Monitor", layout="wide")
     st.title("MES Monitor")
@@ -909,8 +774,8 @@ def main():
 
     _render_kpis_fragment()
 
-    tab_orders, tab_algorithm, tab_machines, tab_unloading, tab_debug, tab_plc = st.tabs(
-        ["Orders", "Algorithm", "Machine Statistics", "Unloading", "Raw Data", "Live PLC Debug"]
+    tab_orders, tab_algorithm, tab_machines, tab_unloading, tab_debug = st.tabs(
+        ["Orders", "Algorithm", "Machine Statistics", "Unloading", "Raw Data"]
     )
 
     with tab_orders:
@@ -923,8 +788,6 @@ def main():
         _render_unloading_fragment()
     with tab_debug:
         _render_debug_fragment()
-    with tab_plc:
-        _render_plc_fragment()
 
 
 if __name__ == "__main__":

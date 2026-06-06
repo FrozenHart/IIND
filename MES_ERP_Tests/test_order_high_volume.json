@@ -6,13 +6,13 @@
     {
       "type": "RWM",
       "quantity": 8,
-      "DDate": 6,
+      "DDate": 7,
       "Penalty": 3.0
     },
     {
       "type": "SWW",
       "quantity": 6,
-      "DDate": 6,
+      "DDate": 7,
       "Penalty": 2.8
     }
   ]

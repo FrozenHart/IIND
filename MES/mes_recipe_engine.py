@@ -148,17 +148,21 @@ class RecipeEngine:
                 material_id=material_id,
             ))
 
-        if legs_needed == 0 and tops_needed == 0 and legs_have >= 2 and tops_have >= 1:
-            ops.append(Operation(
-                piece_type=piece_type,
-                action="ASSEMBLE",
-                tool=profile["join_tool"],
-                duration_s=profile["join_time"],
-                target_id=_final_piece_id(piece_type),
-                req_top_id=profile["top_id"],
-                req_leg_id=profile["leg_id"],
-                req_join_tool=int(profile["join_tool"].replace("T", "")),
-            ))
+        if legs_needed == 0 and tops_needed == 0:
+            assemble_count = min(tables_to_process, legs_have // 2, tops_have)
+            for _ in range(assemble_count):
+                ops.append(Operation(
+                    piece_type=piece_type,
+                    action="ASSEMBLE",
+                    tool=profile["join_tool"],
+                    duration_s=profile["join_time"],
+                    target_id=_final_piece_id(piece_type),
+                    req_top_id=profile["top_id"],
+                    req_leg_id=profile["leg_id"],
+                    req_join_tool=int(profile["join_tool"].replace("T", "")),
+                ))
+                legs_have -= 2
+                tops_have -= 1
 
         return ops if ops else None
 
