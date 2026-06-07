@@ -48,9 +48,6 @@ python MES/run_mes_programs.py --mode all
 
 MES dashboard URL: `http://localhost:8502`
 
--  Validate data flow in the database notebook:
-
-Run Cell 4 (connection check) and then Cell 5 (row counts for all shared tables).
 
 ## Optional ERP Demo Mode
 
