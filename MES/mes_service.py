@@ -657,15 +657,9 @@ class MESService:
             conn.commit()
 
         async def _pulse_ship_final_with_confirm(unload_key, material_id, timeout_s=10.0, poll_s=0.25, max_retries=3):
-            """Ship via U6-U10 and confirm W2 decremented before completing the order.
-            Retries the pulse up to max_retries times if W2 doesn't decrement."""
+            """Ship via U6-U10 and confirm the specific piece type left W2 before completing the order.
+            Retries the pulse up to max_retries times if W2 type count doesn't decrement."""
             for attempt in range(1, max_retries + 1):
-                before = await read_warehouse_counts()
-                if before is None:
-                    await asyncio.sleep(2.5)
-                    continue
-
-                before_w2 = before[1]
                 ok = await pulse_unload_request(unload_key, material_id)
                 if not ok:
                     logger.info(
@@ -676,20 +670,13 @@ class MESService:
                         await asyncio.sleep(1.0)
                     continue
 
-                start = asyncio.get_event_loop().time()
-                while (asyncio.get_event_loop().time() - start) < timeout_s:
-                    await asyncio.sleep(poll_s)
-                    after = await read_warehouse_counts()
-                    if after is None:
-                        continue
-                    _, after_w2 = after
-                    if after_w2 < before_w2:
-                        return True
+                if await _wait_for_w2_type_reduced(material_id, timeout_s, poll_s):
+                    return True
 
-                # W2 didn't decrement — log and retry
+                # W2 didn't decrement for this type — log and retry
                 logger.info(
                     f"[MES] {unload_key} pulse attempt {attempt}/{max_retries} for type={material_id}: "
-                    f"W2 did not decrement (was {before_w2}), retrying..."
+                    f"W2 did not decrement for type={material_id}, retrying..."
                 )
                 if attempt < max_retries:
                     await asyncio.sleep(2.0)
@@ -939,6 +926,33 @@ class MESService:
                     return True
             return False
 
+        async def _wait_for_w2_type_reduced(target_type, timeout_s=10.0, poll_s=0.2):
+            """Wait until count of pieces with target_type in W2 decreases."""
+            snap = await read_warehouse_snapshot()
+            if snap is None:
+                return False
+            _, w2_count, _, bottom_values = snap
+            before = sum(
+                1 for idx in range(min(w2_count, len(bottom_values)))
+                if _extract_type_id(bottom_values[idx]) == target_type
+            )
+            if before == 0:
+                return True
+            start = asyncio.get_event_loop().time()
+            while (asyncio.get_event_loop().time() - start) < timeout_s:
+                await asyncio.sleep(poll_s)
+                snap = await read_warehouse_snapshot()
+                if snap is None:
+                    continue
+                _, w2_count, _, bottom_values = snap
+                now = sum(
+                    1 for idx in range(min(w2_count, len(bottom_values)))
+                    if _extract_type_id(bottom_values[idx]) == target_type
+                )
+                if now < before:
+                    return True
+            return False
+
         def _est_inventory():
             return {
                 "legs": self._est_w1["legs"] + self._est_w2["legs"],
@@ -1100,37 +1114,8 @@ class MESService:
             + ", ".join(f"order {s[0]['order_id']}(need={int(s[0]['quantity_ordered'])-int(s[0]['quantity_completed'])},alloc={s[1]})" for s in selected_orders)
         )
 
-        first_item = selected_orders[0][0]
-        raw_remaining = max(0, int(first_item["quantity_ordered"]) - int(first_item["quantity_completed"]))
-        assemblable_legs = (
-            self._est_w1.get("legs", 0) +
-            self._est_w2.get("legs", 0) +
-            self._pending_transform.get(5, 0) +
-            self._pending_transform.get(8, 0) +
-            self._w2_to_w1_pending.get(5, 0) +
-            self._w2_to_w1_pending.get(8, 0)
-        )
-        assemblable_tops = (
-            self._est_w1.get("tops", 0) +
-            self._est_w2.get("tops", 0) +
-            self._pending_transform.get(3, 0) +
-            self._pending_transform.get(4, 0) +
-            self._pending_transform.get(6, 0) +
-            self._pending_transform.get(7, 0) +
-            self._w2_to_w1_pending.get(3, 0) +
-            self._w2_to_w1_pending.get(4, 0) +
-            self._w2_to_w1_pending.get(6, 0) +
-            self._w2_to_w1_pending.get(7, 0)
-        )
-        assemblable = min(assemblable_legs // 2, assemblable_tops)
-        true_remaining = max(0, raw_remaining - assemblable)
-        if raw_remaining > 0:
-            true_remaining = max(1, true_remaining)
-        selected_orders = [(item, min(share, true_remaining)) for item, share in selected_orders]
-
         all_transform_ops = []
         all_assemble_ops = []
-        first_item = selected_orders[0][0]
         for sel, share in selected_orders:
             ops = self.recipe_engine.next_batch(
                 piece_type=sel["piece_type"],
@@ -1154,7 +1139,7 @@ class MESService:
         transform_ops = all_transform_ops
         assemble_ops = all_assemble_ops
 
-        remaining_final = max(0, true_remaining)
+        remaining_final = max(0, sum(share for _, share in selected_orders))
         required_legs = remaining_final * 2
         required_tops = remaining_final
         logger.info(
