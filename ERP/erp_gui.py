@@ -310,6 +310,7 @@ with tab2:
                 conn = get_db()
                 cur = conn.cursor()
                 cur.execute("DELETE FROM Production_Feedback;")
+                cur.execute("DELETE FROM Loading_Stats;")
                 cur.execute("DELETE FROM Unloading_Stats;")
                 cur.execute("DELETE FROM Machine_Piece_Stats;")
                 cur.execute("DELETE FROM Tool_Stats;")

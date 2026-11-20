@@ -5,8 +5,8 @@ import psycopg2
 
 TB_HOST   = "thingsboard.cloud"
 TB_PORT   = 1883
-MES_TOKEN = "cjoFwM5Jq2VpHFaChwaq"
-ERP_TOKEN = "5CN037YqnYc9lHUpdg4J"
+MES_TOKEN = "ErUbAnaUXYTtllYGCLg8"
+ERP_TOKEN = "1FjlwvAH3qWTtET6ymnD"
 
 DSN = "postgresql://iind_user:IIND20266@localhost:5000/erp_db"
 
@@ -87,7 +87,7 @@ def fetch_mes_stats(conn):
             """)
             for conveyor_id, total in cur.fetchall():
                 if conveyor_id is not None and total is not None:
-                    payload[f"loaded_{str(conveyor_id).lower()}"] = total
+                    payload[f"loaded_c{str(conveyor_id)[1:].lower()}"] = total
         except Exception:
             pass
 
@@ -129,7 +129,7 @@ def fetch_erp_stats(conn):
     return {
         "simulation_day":     day,
         "orders_total":       total,
-        "orders_done":        status_counts.get("Done", 0),
+        "orders_done":        status_counts.get("Completed", 0),
         "orders_in_progress": status_counts.get("In Progress", 0),
         "orders_scheduled":   status_counts.get("Scheduled", 0),
         "orders_pending":     status_counts.get("Pending", 0),
